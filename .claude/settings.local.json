@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m 'docs: 添加软著材料 AI 生产系统设计文档 *)"
+    ]
+  }
+}
