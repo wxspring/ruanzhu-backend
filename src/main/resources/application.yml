@@ -1,0 +1,63 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: ruanzhu
+  profiles:
+    active: dev
+
+  # Jackson
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+  # Servlet
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+# MyBatis Plus
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.company.ruanzhu.**.model
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# MinIO
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket-name: ruanzhu
+
+# JWT
+jwt:
+  secret: ruanzhu-secret-key-must-be-at-least-256-bits-long-for-hs256
+  expiration: 86400000  # 24 hours
+
+# Async Task
+task:
+  execution:
+    pool:
+      core-size: 5
+      max-size: 10
+      queue-capacity: 100
+    thread-name-prefix: ruanzhu-async-
+
+# Logging
+logging:
+  level:
+    com.company.ruanzhu: DEBUG
+    org.springframework.security: INFO
