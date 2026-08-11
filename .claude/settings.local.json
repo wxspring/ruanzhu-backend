@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(git commit -m 'docs: 添加软著材料 AI 生产系统设计文档 *)"
+      "Bash(git commit -m 'docs: 添加软著材料 AI 生产系统设计文档 *)",
+      "Bash(git commit -m 'docs: add implementation plan for ruanzhu system *)",
+      "Bash(bash \"C:\\\\Users\\\\Lenovo\\\\.claude\\\\plugins\\\\cache\\\\superpowers-dev\\\\superpowers\\\\6.2.0\\\\skills\\\\subagent-driven-development\\\\scripts\\\\sdd-workspace\" docs/superpowers/plans/2026-08-10-ruanzhu-system.md)",
+      "Bash(mvn compile *)",
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Bash(bash \"C:\\\\Users\\\\Lenovo\\\\.claude\\\\plugins\\\\cache\\\\superpowers-dev\\\\superpowers\\\\6.2.0\\\\skills\\\\subagent-driven-development\\\\scripts\\\\review-package\" docs/superpowers/plans/2026-08-10-ruanzhu-system.md 2996a5a fb93255)",
+      "Bash(dir \"C:\\\\Program Files\\\\Java\")",
+      "Bash(findstr /i \"jdk\")",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\Java\")",
+      "Bash(C:\\\\Program Files\\\\Java\\\\jdk-21.0.12\\\\bin\\\\java.exe *)",
+      "PowerShell(java *)"
     ]
   }
 }
