@@ -6,6 +6,7 @@ import com.company.ruanzhu.common.util.PageResult;
 import com.company.ruanzhu.file.model.FileRecord;
 import com.company.ruanzhu.file.model.vo.FileRecordVO;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
+import com.company.ruanzhu.file.service.ExportService;
 import com.company.ruanzhu.file.service.FileService;
 import com.company.ruanzhu.generate.model.vo.CodeAnalysisResult;
 import com.company.ruanzhu.generate.service.CodeAnalysisService;
@@ -39,6 +40,7 @@ public class ProjectController {
     private final ProjectService projectService;
     private final SoftwareSummaryService softwareSummaryService;
     private final FileService fileService;
+    private final ExportService exportService;
     private final CodeAnalysisService codeAnalysisService;
     private final FileRecordRepository fileRecordRepository;
 
@@ -140,6 +142,25 @@ public class ProjectController {
                         "attachment; filename=\"" + record.getFileName() + "\"")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(data);
+    }
+
+    /**
+     * Export all materials for a project as a ZIP file.
+     */
+    @GetMapping("/{id}/export")
+    public ResponseEntity<byte[]> exportProject(@PathVariable Long id,
+                                                 @AuthenticationPrincipal UserPrincipal principal) {
+        try {
+            byte[] zipBytes = exportService.exportProject(id);
+            String fileName = exportService.getZipFileName(id);
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .body(zipBytes);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR);
+        }
     }
 
     private FileRecordVO toVO(FileRecord record) {
