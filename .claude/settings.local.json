@@ -13,7 +13,12 @@
       "Bash(findstr /i \"jdk\")",
       "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\Java\")",
       "Bash(C:\\\\Program Files\\\\Java\\\\jdk-21.0.12\\\\bin\\\\java.exe *)",
-      "PowerShell(java *)"
+      "PowerShell(java *)",
+      "Bash(bash \"C:\\\\Users\\\\Lenovo\\\\.claude\\\\plugins\\\\cache\\\\superpowers-dev\\\\superpowers\\\\6.2.0\\\\skills\\\\subagent-driven-development\\\\scripts\\\\task-brief\" docs/superpowers/plans/2026-08-10-ruanzhu-system.md 4)",
+      "Bash(where java *)",
+      "Read(//c/Program Files/Java/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Java/jdk-21.0.12\" PATH=\"C:/Program Files/Java/jdk-21.0.12/bin:$PATH\" java *)"
     ]
   }
 }
