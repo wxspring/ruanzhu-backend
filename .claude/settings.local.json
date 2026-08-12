@@ -34,7 +34,8 @@
       "Bash(cd \"D:/workspace/javaSpace/ruanzhu\")",
       "Bash(git reset *)",
       "Bash(JAVA_HOME='C:/Program Files/Java/jdk-21.0.12' PATH='C:/Program Files/Java/jdk-21.0.12/bin:__TRACKED_VAR__' mvn test)",
-      "Bash(JAVA_HOME='C:/Program Files/Java/jdk-21.0.12' PATH='C:/Program Files/Java/jdk-21.0.12/bin:__TRACKED_VAR__' mvn test -q)"
+      "Bash(JAVA_HOME='C:/Program Files/Java/jdk-21.0.12' PATH='C:/Program Files/Java/jdk-21.0.12/bin:__TRACKED_VAR__' mvn test -q)",
+      "Bash(npm create *)"
     ]
   }
 }
