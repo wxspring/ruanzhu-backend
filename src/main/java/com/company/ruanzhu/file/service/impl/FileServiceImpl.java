@@ -8,6 +8,7 @@ import com.company.ruanzhu.file.model.FileRecord;
 import com.company.ruanzhu.file.model.vo.FileRecordVO;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
 import com.company.ruanzhu.file.service.FileService;
+import com.company.ruanzhu.file.storage.StorageClient;
 import com.company.ruanzhu.project.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,16 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -35,10 +30,9 @@ import java.util.zip.ZipInputStream;
 @RequiredArgsConstructor
 public class FileServiceImpl implements FileService {
 
-    private static final String UPLOAD_BASE_DIR = "./uploads/seed-code";
-
     private final FileRecordRepository fileRecordRepository;
     private final ProjectRepository projectRepository;
+    private final StorageClient storageClient;
 
     @Override
     @Transactional
@@ -61,29 +55,35 @@ public class FileServiceImpl implements FileService {
                 .max()
                 .orElse(0) + 1;
 
-        // 4. Build storage directory and save the file
+        // 4. Build storage object name and upload via StorageClient
         String relativeDir = projectId + "/";
-        Path storageDir = Paths.get(UPLOAD_BASE_DIR, relativeDir);
-        try {
-            Files.createDirectories(storageDir);
-        } catch (IOException e) {
-            log.error("Failed to create upload directory: {}", storageDir, e);
-            throw new BusinessException(ErrorCode.FILE_UPLOAD_ERROR);
-        }
-
         String storedName = UUID.randomUUID() + "_" + originalFilename;
-        Path filePath = storageDir.resolve(storedName);
-        String storagePath = relativeDir + storedName;
+        String objectName = relativeDir + storedName;
 
-        try (InputStream in = file.getInputStream()) {
-            Files.copy(in, filePath, StandardCopyOption.REPLACE_EXISTING);
+        String contentType = file.getContentType() != null
+                ? file.getContentType()
+                : "application/zip";
+
+        String storagePath;
+        byte[] fileBytes;
+        try {
+            fileBytes = file.getBytes();
         } catch (IOException e) {
-            log.error("Failed to save file: {}", filePath, e);
+            log.error("Failed to read multipart file bytes", e);
             throw new BusinessException(ErrorCode.FILE_UPLOAD_ERROR);
         }
 
-        // 5. Extract ZIP entries (source file list)
-        List<String> sourceFiles = extractZipEntries(filePath);
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(fileBytes)) {
+            storagePath = storageClient.upload(objectName, bais, contentType);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to upload file via storage client: {}", objectName, e);
+            throw new BusinessException(ErrorCode.FILE_UPLOAD_ERROR);
+        }
+
+        // 5. Extract ZIP entries (source file list) from in-memory bytes
+        List<String> sourceFiles = extractZipEntries(fileBytes);
 
         // 6. Persist file metadata
         FileRecord record = new FileRecord();
@@ -102,24 +102,17 @@ public class FileServiceImpl implements FileService {
 
     @Override
     public byte[] downloadFile(String storagePath) {
-        Path filePath = Paths.get(UPLOAD_BASE_DIR, storagePath);
-        try {
-            return Files.readAllBytes(filePath);
-        } catch (IOException e) {
-            log.error("Failed to read file: {}", filePath, e);
-            throw new BusinessException(ErrorCode.FILE_NOT_FOUND);
-        }
+        return storageClient.download(storagePath);
     }
 
     @Override
     @Transactional
     public void deleteFile(String storagePath) {
-        // Delete physical file
-        Path filePath = Paths.get(UPLOAD_BASE_DIR, storagePath);
+        // Delete physical file via storage client
         try {
-            Files.deleteIfExists(filePath);
-        } catch (IOException e) {
-            log.error("Failed to delete physical file: {}", filePath, e);
+            storageClient.delete(storagePath);
+        } catch (Exception e) {
+            log.error("Failed to delete physical file via storage client: {}", storagePath, e);
         }
 
         // Delete matching DB records
@@ -133,17 +126,22 @@ public class FileServiceImpl implements FileService {
         }
     }
 
+    @Override
+    public String getPresignedUrl(String storagePath, int expirySeconds) {
+        return storageClient.getPresignedUrl(storagePath, expirySeconds);
+    }
+
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
 
     /**
-     * Walk a ZIP file and return relative paths of non-hidden entries.
+     * Walk a ZIP file from in-memory bytes and return relative paths of non-hidden entries.
      * The ZIP is <em>not</em> expanded to disk; only the entry list is collected.
      */
-    private List<String> extractZipEntries(Path zipPath) {
+    private List<String> extractZipEntries(byte[] zipBytes) {
         List<String> entries = new ArrayList<>();
-        try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(zipPath))) {
+        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 String name = entry.getName();
@@ -154,7 +152,7 @@ public class FileServiceImpl implements FileService {
                 zis.closeEntry();
             }
         } catch (IOException e) {
-            log.error("Failed to read ZIP entries: {}", zipPath, e);
+            log.error("Failed to read ZIP entries from bytes", e);
         }
         return entries;
     }

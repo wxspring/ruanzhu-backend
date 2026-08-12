@@ -18,4 +18,12 @@ public interface FileRecordRepository extends BaseMapper<FileRecord> {
                 .orderByDesc(FileRecord::getVersion)
         );
     }
+
+    default List<FileRecord> findByProjectId(Long projectId) {
+        return selectList(
+            new LambdaQueryWrapper<FileRecord>()
+                .eq(FileRecord::getProjectId, projectId)
+                .orderByDesc(FileRecord::getCreatedAt)
+        );
+    }
 }

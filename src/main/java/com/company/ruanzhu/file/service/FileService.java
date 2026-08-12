@@ -28,4 +28,13 @@ public interface FileService {
      * @param storagePath the relative path inside the uploads directory
      */
     void deleteFile(String storagePath);
+
+    /**
+     * Generate a pre-signed URL for temporary access to a stored file.
+     *
+     * @param storagePath   the relative path inside the storage
+     * @param expirySeconds how long the URL should remain valid (in seconds)
+     * @return a pre-signed URL string
+     */
+    String getPresignedUrl(String storagePath, int expirySeconds);
 }
