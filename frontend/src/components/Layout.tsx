@@ -26,6 +26,11 @@ export default function AppLayout() {
       icon: <PlusOutlined />,
       label: '创建项目',
     },
+    ...(user?.role === 'ADMIN' ? [{
+      key: '/admin/users',
+      icon: <UserOutlined />,
+      label: '用户管理',
+    }] : []),
   ]
 
   const userMenuItems = [
