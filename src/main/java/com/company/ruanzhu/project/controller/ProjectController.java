@@ -3,6 +3,8 @@ package com.company.ruanzhu.project.controller;
 import com.company.ruanzhu.common.model.Result;
 import com.company.ruanzhu.common.util.PageRequest;
 import com.company.ruanzhu.common.util.PageResult;
+import com.company.ruanzhu.file.model.vo.FileRecordVO;
+import com.company.ruanzhu.file.service.FileService;
 import com.company.ruanzhu.project.model.dto.ProjectCreateRequest;
 import com.company.ruanzhu.project.model.dto.ProjectUpdateRequest;
 import com.company.ruanzhu.project.model.dto.SoftwareSummaryUpdateRequest;
@@ -16,6 +18,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/projects")
@@ -24,6 +27,7 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final SoftwareSummaryService softwareSummaryService;
+    private final FileService fileService;
 
     @PostMapping
     public Result<ProjectVO> createProject(@Valid @RequestBody ProjectCreateRequest request,
@@ -75,6 +79,14 @@ public class ProjectController {
                                                            @Valid @RequestBody SoftwareSummaryUpdateRequest request,
                                                            @AuthenticationPrincipal UserPrincipal principal) {
         SoftwareSummaryVO vo = softwareSummaryService.updateSummary(id, request);
+        return Result.success(vo);
+    }
+
+    @PostMapping("/{id}/upload-code")
+    public Result<FileRecordVO> uploadSeedCode(@PathVariable Long id,
+                                               @RequestParam("file") MultipartFile file,
+                                               @AuthenticationPrincipal UserPrincipal principal) {
+        FileRecordVO vo = fileService.uploadSeedCode(id, file);
         return Result.success(vo);
     }
 }

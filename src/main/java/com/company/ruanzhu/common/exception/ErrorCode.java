@@ -23,7 +23,8 @@ public enum ErrorCode {
     USERNAME_EXISTS(1009, "用户名已存在"),
     PASSWORD_ERROR(1010, "密码错误"),
     AI_SERVICE_ERROR(1011, "AI服务调用失败"),
-    FILE_UPLOAD_ERROR(1012, "文件上传失败");
+    FILE_UPLOAD_ERROR(1012, "文件上传失败"),
+    FILE_INVALID_TYPE(1013, "文件类型不正确，仅支持ZIP格式");
 
     private final int code;
     private final String message;
