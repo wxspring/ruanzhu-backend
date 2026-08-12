@@ -5,6 +5,8 @@ import com.company.ruanzhu.common.util.PageRequest;
 import com.company.ruanzhu.common.util.PageResult;
 import com.company.ruanzhu.file.model.vo.FileRecordVO;
 import com.company.ruanzhu.file.service.FileService;
+import com.company.ruanzhu.generate.model.vo.CodeAnalysisResult;
+import com.company.ruanzhu.generate.service.CodeAnalysisService;
 import com.company.ruanzhu.project.model.dto.ProjectCreateRequest;
 import com.company.ruanzhu.project.model.dto.ProjectUpdateRequest;
 import com.company.ruanzhu.project.model.dto.SoftwareSummaryUpdateRequest;
@@ -28,6 +30,7 @@ public class ProjectController {
     private final ProjectService projectService;
     private final SoftwareSummaryService softwareSummaryService;
     private final FileService fileService;
+    private final CodeAnalysisService codeAnalysisService;
 
     @PostMapping
     public Result<ProjectVO> createProject(@Valid @RequestBody ProjectCreateRequest request,
@@ -88,5 +91,12 @@ public class ProjectController {
                                                @AuthenticationPrincipal UserPrincipal principal) {
         FileRecordVO vo = fileService.uploadSeedCode(id, file);
         return Result.success(vo);
+    }
+
+    @PostMapping("/{id}/analyze-code")
+    public Result<CodeAnalysisResult> analyzeCode(@PathVariable Long id,
+                                                  @AuthenticationPrincipal UserPrincipal principal) {
+        CodeAnalysisResult result = codeAnalysisService.analyzeProject(id);
+        return Result.success(result);
     }
 }
