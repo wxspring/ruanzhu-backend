@@ -161,10 +161,12 @@ public class ProjectServiceImpl implements ProjectService {
         vo.setRunPlatform(summary.getRunPlatform());
         vo.setRunSupport(summary.getRunSupport());
         vo.setLanguage(summary.getLanguage());
+        vo.setCodeLines(summary.getCodeLines());
         vo.setPurpose(summary.getPurpose());
         vo.setTargetDomain(summary.getTargetDomain());
         vo.setMainFunctions(summary.getMainFunctions());
         vo.setTechFeatures(summary.getTechFeatures());
+        vo.setTechFeatureOptions(summary.getTechFeatureOptions());
         return vo;
     }
 }

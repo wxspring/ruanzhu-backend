@@ -1,11 +1,9 @@
-package com.company.ruanzhu.project.model.vo;
+package com.company.ruanzhu.project.model.dto;
 
 import lombok.Data;
 
 @Data
-public class SoftwareSummaryVO {
-    private Long id;
-    private Long projectId;
+public class SoftwareSummaryUpdateRequest {
     private String version;
     private String category;
     private String devHardware;
@@ -15,7 +13,6 @@ public class SoftwareSummaryVO {
     private String runPlatform;
     private String runSupport;
     private String language;
-    private Integer codeLines;
     private String purpose;
     private String targetDomain;
     private String mainFunctions;
