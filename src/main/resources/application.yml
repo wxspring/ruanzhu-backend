@@ -42,6 +42,10 @@ minio:
   secret-key: minioadmin
   bucket-name: ruanzhu
 
+# Storage profile: "minio" (default, production) or "local" (dev/testing)
+storage:
+  profile: minio
+
 # JWT
 jwt:
   secret: ruanzhu-secret-key-must-be-at-least-256-bits-long-for-hs256
