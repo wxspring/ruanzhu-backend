@@ -35,8 +35,8 @@ export default function ManualEditor({ projectId, projectName: _projectName }: M
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-2xl mx-auto focus:outline-none',
-        style: 'min-height: 400px; padding: 16px; border: 1px solid #d9d9d9; border-radius: 6px;',
+        class: 'manual-editor',
+        style: 'min-height: 400px; padding: 16px; border: 1px solid #d9d9d9; border-radius: 6px; outline: none;',
       },
     },
   })

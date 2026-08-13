@@ -39,3 +39,17 @@ body {
   background-color: #1890ff !important;
   color: #fff !important;
 }
+
+/* Manual editor typography (replaces removed Tailwind prose classes) */
+.manual-editor {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333;
+}
+
+.manual-editor h1 { font-size: 2em; font-weight: 600; margin: 0.67em 0; }
+.manual-editor h2 { font-size: 1.5em; font-weight: 600; margin: 0.75em 0; }
+.manual-editor h3 { font-size: 1.25em; font-weight: 600; margin: 0.83em 0; }
+.manual-editor p { margin: 0.5em 0; }
+.manual-editor ul, .manual-editor ol { padding-left: 1.5em; margin: 0.5em 0; }
+.manual-editor li { margin: 0.25em 0; }
