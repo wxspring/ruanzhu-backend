@@ -14,7 +14,7 @@ interface ManualEditorProps {
   projectName: string
 }
 
-export default function ManualEditor({ projectId, projectName }: ManualEditorProps) {
+export default function ManualEditor({ projectId, projectName: _projectName }: ManualEditorProps) {
   const [content, setContent] = useState<string>('')
   const [taskId, setTaskId] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)

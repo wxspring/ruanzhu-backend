@@ -1,5 +1,5 @@
 import { Form, Input, Button, Card, message, Upload, Space } from 'antd'
-import { UploadOutlined, InboxOutlined } from '@ant-design/icons'
+import { InboxOutlined } from '@ant-design/icons'
 import type { UploadProps } from 'antd'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -10,7 +10,7 @@ export default function ProjectCreate() {
   const [form] = Form.useForm()
   const [fileList, setFileList] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
-  const [createdProjectId, setCreatedProjectId] = useState<number | null>(null)
+  const [, setCreatedProjectId] = useState<number | null>(null)
 
   const uploadProps: UploadProps = {
     name: 'file',

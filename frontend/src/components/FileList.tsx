@@ -55,7 +55,7 @@ export default function FileList({ projectId, files, onRefresh }: FileListProps)
     }
   }
 
-  const handleDelete = async (fileId: number) => {
+  const handleDelete = async (_fileId: number) => {
     try {
       // Note: Backend may not have delete endpoint yet
       // For now, just refresh the list
