@@ -70,7 +70,7 @@ ai:
   qwen:
     api-key: ${QWEN_API_KEY:}
     model: DeepSeek-V4-Flash
-    base-url:https://ws-hk7d1awi670k1rjp.cn-beijing.maas.aliyuncs.com/api/v1
+    base-url: https://ws-hk7d1awi670k1rjp.cn-beijing.maas.aliyuncs.com/api/v1
 
 # Logging
 logging:
