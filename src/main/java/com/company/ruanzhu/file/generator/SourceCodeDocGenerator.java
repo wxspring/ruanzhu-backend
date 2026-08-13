@@ -7,6 +7,7 @@ import com.company.ruanzhu.project.service.ProjectService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.xwpf.usermodel.*;
+import org.apache.poi.wp.usermodel.HeaderFooterType;
 import org.apache.poi.util.Units;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 import org.springframework.stereotype.Component;
@@ -25,7 +26,6 @@ import java.math.BigInteger;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class SourceCodeDocGenerator implements DocumentGenerator {
 
     private static final int LINES_PER_PAGE = 50;
