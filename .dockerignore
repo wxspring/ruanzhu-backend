@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+frontend/dist/
+frontend/node_modules/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Superpowers workspace
+.superpowers/
+
+# Environment
+.env
+.env.*
