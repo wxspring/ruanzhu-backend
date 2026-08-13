@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Tabs, Form, Input, Button, message, Spin, Space } from 'antd'
 import api from '../api/axios'
+import CodeEditor from '../components/CodeEditor'
+import ManualEditor from '../components/ManualEditor'
 
 const { TextArea } = Input
 
@@ -19,9 +21,11 @@ export default function ProjectEdit() {
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [summaryForm] = Form.useForm()
+  const [files, setFiles] = useState<any[]>([])
 
   useEffect(() => {
     fetchProject()
+    fetchFiles()
   }, [id])
 
   const fetchProject = async () => {
@@ -36,6 +40,15 @@ export default function ProjectEdit() {
       message.error('获取项目详情失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchFiles = async () => {
+    try {
+      const response = await api.get(`/api/projects/${id}/files`)
+      setFiles(response.data.data || [])
+    } catch (error) {
+      console.error('Failed to fetch files:', error)
     }
   }
 
@@ -133,24 +146,21 @@ export default function ProjectEdit() {
       key: 'code',
       label: '源代码',
       children: (
-        <div>
-          <p>源代码查看和编辑功能（需要集成 Monaco Editor）</p>
-          <Button type="primary" onClick={() => message.info('此功能正在开发中')}>
-            查看源代码
-          </Button>
-        </div>
+        <CodeEditor
+          projectId={Number(id)}
+          files={files}
+          onRefreshFiles={fetchFiles}
+        />
       ),
     },
     {
       key: 'manual',
       label: '操作手册',
       children: (
-        <div>
-          <p>操作手册编辑功能（需要集成富文本编辑器）</p>
-          <Button type="primary" onClick={() => message.info('此功能正在开发中')}>
-            编辑手册
-          </Button>
-        </div>
+        <ManualEditor
+          projectId={Number(id)}
+          projectName={project.name}
+        />
       ),
     },
   ]
