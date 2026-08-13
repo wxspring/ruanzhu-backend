@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Descriptions, Button, Tabs, message, Spin } from 'antd'
-import { DownloadOutlined } from '@ant-design/icons'
+import { useParams } from 'react-router-dom'
+import { Card, Descriptions, Button, message, Spin, Space } from 'antd'
+import { DownloadOutlined, FileOutlined } from '@ant-design/icons'
 import api from '../api/axios'
+import FileList from '../components/FileList'
 
 interface Project {
   id: number
@@ -15,12 +16,13 @@ interface Project {
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
+  const [files, setFiles] = useState<any[]>([])
 
   useEffect(() => {
     fetchProject()
+    fetchFiles()
   }, [id])
 
   const fetchProject = async () => {
@@ -31,6 +33,15 @@ export default function ProjectDetail() {
       message.error('获取项目详情失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchFiles = async () => {
+    try {
+      const response = await api.get(`/api/projects/${id}/files`)
+      setFiles(response.data.data || [])
+    } catch (error) {
+      console.error('Failed to fetch files:', error)
     }
   }
 
@@ -90,6 +101,22 @@ export default function ProjectDetail() {
           <Descriptions.Item label="主要功能">{summary.mainFunctions || '-'}</Descriptions.Item>
           <Descriptions.Item label="技术特点">{summary.techFeatures || '-'}</Descriptions.Item>
         </Descriptions>
+      </Card>
+
+      <Card
+        title={
+          <Space>
+            <FileOutlined />
+            <span>项目文件</span>
+          </Space>
+        }
+        style={{ marginTop: 16 }}
+      >
+        <FileList
+          projectId={Number(id)}
+          files={files}
+          onRefresh={fetchFiles}
+        />
       </Card>
     </div>
   )
