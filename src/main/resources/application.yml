@@ -62,14 +62,15 @@ task:
 
 # AI Configuration
 ai:
-  provider: openai  # openai or qwen
+  provider: qwen  # openai or qwen
   openai:
     api-key: ${OPENAI_API_KEY:}
     base-url: https://api.openai.com
     model: gpt-4
   qwen:
     api-key: ${QWEN_API_KEY:}
-    model: qwen-plus
+    model: DeepSeek-V4-Flash
+    base-url:https://ws-hk7d1awi670k1rjp.cn-beijing.maas.aliyuncs.com/api/v1
 
 # Logging
 logging:
