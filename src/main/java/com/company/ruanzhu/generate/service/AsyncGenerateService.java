@@ -31,11 +31,44 @@ public class AsyncGenerateService {
             // Step 1: Analyze code (20%)
             taskService.updateTaskStatus(taskId, "RUNNING", 20, null);
 
-            // Step 2: Expand code (60%)
-            taskService.updateTaskStatus(taskId, "RUNNING", 60, null);
-            codeExpansionService.expandCode(projectId);
+            // Step 2: Expand/generate code (60%)
+            taskService.updateTaskStatus(taskId, "RUNNING", 40, null);
+            String generatedCode = codeExpansionService.expandCode(projectId);
 
-            // Step 3: Complete (100%)
+            // Step 3: Save to storage (80%)
+            taskService.updateTaskStatus(taskId, "RUNNING", 60, null);
+            String fileName = "generated_code_" + projectId + ".txt";
+            String storagePath = "projects/" + projectId + "/code/" + fileName;
+
+            // Convert to bytes and upload
+            byte[] contentBytes = generatedCode.getBytes(StandardCharsets.UTF_8);
+            java.io.ByteArrayInputStream inputStream = new java.io.ByteArrayInputStream(contentBytes);
+            storageClient.upload(storagePath, inputStream, "text/plain");
+
+            // Create or update file record
+            FileRecord fileRecord = new FileRecord();
+            fileRecord.setProjectId(projectId);
+            fileRecord.setFileType("GENERATED_CODE");
+            fileRecord.setFileName(fileName);
+            fileRecord.setStoragePath(storagePath);
+            fileRecord.setFileSize((long) contentBytes.length);
+            fileRecord.setVersion(1);
+
+            // Check if generated code file already exists
+            java.util.List<FileRecord> existingFiles = fileRecordRepository.findByProjectIdAndFileType(projectId, "GENERATED_CODE");
+            if (!existingFiles.isEmpty()) {
+                // Update existing record
+                FileRecord existing = existingFiles.get(0);
+                existing.setStoragePath(storagePath);
+                existing.setFileSize(fileRecord.getFileSize());
+                existing.setVersion(existing.getVersion() + 1);
+                fileRecordRepository.updateById(existing);
+            } else {
+                // Insert new record
+                fileRecordRepository.insert(fileRecord);
+            }
+
+            // Step 4: Complete (100%)
             taskService.updateTaskStatus(taskId, "SUCCESS", 100, null);
             log.info("Code generation task completed: {}", taskId);
 
