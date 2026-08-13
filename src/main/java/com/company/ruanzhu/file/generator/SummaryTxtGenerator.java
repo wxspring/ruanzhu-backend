@@ -3,9 +3,7 @@ package com.company.ruanzhu.file.generator;
 import com.company.ruanzhu.project.model.vo.ProjectVO;
 import com.company.ruanzhu.project.model.vo.SoftwareSummaryVO;
 import com.company.ruanzhu.project.service.ProjectService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 
@@ -13,7 +11,7 @@ import java.nio.charset.StandardCharsets;
  * Generates software summary TXT file.
  */
 @Slf4j
-@Component
+
 public class SummaryTxtGenerator {
 
     private final ProjectService projectService;

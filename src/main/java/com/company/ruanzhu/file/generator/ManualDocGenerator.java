@@ -3,11 +3,9 @@ package com.company.ruanzhu.file.generator;
 import com.company.ruanzhu.project.model.vo.ProjectVO;
 import com.company.ruanzhu.project.model.vo.SoftwareSummaryVO;
 import com.company.ruanzhu.project.service.ProjectService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.xwpf.usermodel.*;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STFldCharType;
-import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
 
@@ -15,7 +13,7 @@ import java.io.ByteArrayOutputStream;
  * Generates operation manual document (说明文档) in Word format.
  */
 @Slf4j
-@Component
+
 public class ManualDocGenerator implements DocumentGenerator {
 
     private final ProjectService projectService;
