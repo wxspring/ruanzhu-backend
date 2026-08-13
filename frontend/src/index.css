@@ -12,3 +12,30 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* TipTap Editor Styles */
+.ProseMirror {
+  min-height: 400px;
+  padding: 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.ProseMirror:focus {
+  outline: none;
+  border-color: #1890ff;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #adb5bd;
+  pointer-events: none;
+  height: 0;
+}
+
+.is-active {
+  background-color: #1890ff !important;
+  color: #fff !important;
+}
