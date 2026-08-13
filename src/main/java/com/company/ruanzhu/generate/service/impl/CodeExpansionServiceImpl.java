@@ -7,6 +7,10 @@ import com.company.ruanzhu.file.repository.FileRecordRepository;
 import com.company.ruanzhu.file.storage.StorageClient;
 import com.company.ruanzhu.generate.ai.AiClient;
 import com.company.ruanzhu.generate.service.CodeExpansionService;
+import com.company.ruanzhu.project.model.Project;
+import com.company.ruanzhu.project.model.SoftwareSummary;
+import com.company.ruanzhu.project.repository.ProjectRepository;
+import com.company.ruanzhu.project.repository.SoftwareSummaryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,6 +25,7 @@ import java.util.zip.ZipInputStream;
 /**
  * Implementation of code expansion service.
  * Extracts seed code, analyzes it, and optionally expands using AI.
+ * Can also generate code from scratch if no seed code exists.
  */
 @Slf4j
 @Service
@@ -33,15 +38,21 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
     private final FileRecordRepository fileRecordRepository;
     private final StorageClient storageClient;
     private final AiClient aiClient;
+    private final ProjectRepository projectRepository;
+    private final SoftwareSummaryRepository softwareSummaryRepository;
 
     @Override
     public String expandCode(Long projectId) {
-        // Get the latest seed code file
+        // Check if seed code exists
         List<FileRecord> records = fileRecordRepository.findByProjectIdAndFileType(projectId, "SEED_CODE");
+
         if (records.isEmpty()) {
-            throw new BusinessException(ErrorCode.SEED_CODE_NOT_FOUND);
+            // No seed code - generate from scratch using software summary
+            log.info("Project {} has no seed code, generating from scratch", projectId);
+            return generateFromScratch(projectId);
         }
 
+        // Has seed code - extract and expand
         FileRecord latestRecord = records.stream()
                 .max(Comparator.comparingInt(r -> r.getVersion() != null ? r.getVersion() : 0))
                 .orElseThrow(() -> new BusinessException(ErrorCode.SEED_CODE_NOT_FOUND));
@@ -63,6 +74,50 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
         String expandedCode = expandWithAi(codeContent, currentLines, TARGET_LINES);
 
         return expandedCode;
+    }
+
+    /**
+     * Generate code from scratch using software summary information.
+     */
+    private String generateFromScratch(Long projectId) {
+        Project project = projectRepository.selectById(projectId);
+        if (project == null) {
+            throw new BusinessException(ErrorCode.PROJECT_NOT_FOUND);
+        }
+
+        SoftwareSummary summary = softwareSummaryRepository.findByProjectId(projectId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SUMMARY_NOT_FOUND));
+
+        String language = summary.getLanguage() != null ? summary.getLanguage() : "Java";
+        String purpose = summary.getPurpose() != null ? summary.getPurpose() : project.getName();
+        String domain = summary.getTargetDomain() != null ? summary.getTargetDomain() : "企业管理";
+        String functions = summary.getMainFunctions() != null ? summary.getMainFunctions() : "基础管理功能";
+
+        String prompt = String.format("""
+                你是一个专业的软件开发专家。请根据以下软件信息，生成完整的源代码以满足软件著作权申请要求。
+
+                软件名称：%s
+                编程语言：%s
+                开发目的：%s
+                面向领域：%s
+                主要功能：%s
+
+                要求：
+                1. 生成 %d 行左右的完整代码
+                2. 代码结构清晰，包含完整的类、方法、注释
+                3. 实现上述主要功能
+                4. 包含必要的异常处理、日志记录
+                5. 代码要看起来真实、专业、可运行
+                6. 直接输出代码，不要解释
+                7. 每个文件用 // File: filename 注释分隔
+
+                注意：生成的代码应该是有意义的功能代码，体现软件的核心业务逻辑。
+                """, project.getName(), language, purpose, domain, functions, TARGET_LINES);
+
+        String generatedCode = aiClient.generate(prompt);
+        log.info("Generated {} lines of code from scratch for project {}", countLines(generatedCode), projectId);
+
+        return generatedCode;
     }
 
     @Override

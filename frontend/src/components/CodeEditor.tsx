@@ -133,10 +133,9 @@ export default function CodeEditor({ projectId, files, onRefreshFiles }: CodeEdi
             type="primary"
             icon={<PlayCircleOutlined />}
             onClick={handleGenerateCode}
-            disabled={!!taskId || codeFiles.length === 0}
-            title={codeFiles.length === 0 ? '请先上传种子代码' : ''}
+            disabled={!!taskId}
           >
-            生成代码
+            {codeFiles.length === 0 ? '从头生成代码' : '生成代码'}
           </Button>
           <Button
             icon={<SaveOutlined />}
@@ -190,7 +189,15 @@ export default function CodeEditor({ projectId, files, onRefreshFiles }: CodeEdi
         <Card>
           <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
             <p>暂无代码文件</p>
-            <p style={{ color: '#ff4d4f', fontSize: '14px' }}>请先上传种子代码（ZIP 格式），上传后才能生成代码文档</p>
+            <p style={{ fontSize: '14px', marginTop: '12px' }}>
+              您可以选择：
+            </p>
+            <p style={{ fontSize: '14px', marginTop: '8px' }}>
+              1. 上传种子代码（ZIP 格式），系统将基于您的代码进行扩展
+            </p>
+            <p style={{ fontSize: '14px', marginTop: '8px' }}>
+              2. 直接点击"从头生成代码"，系统将根据软件概要自动生成完整代码
+            </p>
           </div>
         </Card>
       )}
