@@ -13,9 +13,13 @@ public class SoftwareSummaryUpdateRequest {
     private String runPlatform;
     private String runSupport;
     private String language;
+    private Integer codeLines;
     private String purpose;
     private String targetDomain;
     private String mainFunctions;
     private String techFeatures;
     private String techFeatureOptions;
+    private String systemOverview;
+    private String functionalFeatures;
+    private String functionMenu;
 }

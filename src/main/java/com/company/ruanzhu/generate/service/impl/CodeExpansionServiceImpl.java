@@ -33,7 +33,7 @@ import java.util.zip.ZipInputStream;
 public class CodeExpansionServiceImpl implements CodeExpansionService {
 
     private static final int MIN_LINES = 3000;
-    private static final int TARGET_LINES = 5000;
+    private static final int TARGET_LINES = 8000;
 
     private final FileRecordRepository fileRecordRepository;
     private final StorageClient storageClient;
@@ -92,30 +92,82 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
         String purpose = summary.getPurpose() != null ? summary.getPurpose() : project.getName();
         String domain = summary.getTargetDomain() != null ? summary.getTargetDomain() : "企业管理";
         String functions = summary.getMainFunctions() != null ? summary.getMainFunctions() : "基础管理功能";
+        String techOptions = summary.getTechFeatureOptions() != null ? summary.getTechFeatureOptions() : "物联网软件";
+        String functionMenu = summary.getFunctionMenu() != null ? summary.getFunctionMenu() : "";
+
+        // 功能菜单上下文（如果有）
+        String menuCtx = functionMenu.isEmpty() ? "（未提供功能菜单）" : functionMenu;
 
         String prompt = String.format("""
-                你是一个专业的软件开发专家。请根据以下软件信息，生成完整的源代码以满足软件著作权申请要求。
+                你是一个专业的 Java Spring Boot 后端开发工程师。请为以下软件生成完整的、可编译运行的 Spring Boot 源代码（面向软件著作权申请）。
 
                 软件名称：%s
                 编程语言：%s
+                技术特点选项：%s
                 开发目的：%s
                 面向领域：%s
                 主要功能：%s
+                已确认的功能菜单（按此菜单展开业务类）：
+                %s
 
-                要求：
-                1. 生成 %d 行左右的完整代码
-                2. 代码结构清晰，包含完整的类、方法、注释
-                3. 实现上述主要功能
-                4. 包含必要的异常处理、日志记录
-                5. 代码要看起来真实、专业、可运行
-                6. 直接输出代码，不要解释
-                7. 每个文件用 // File: filename 注释分隔
+                【技术栈强制要求】
+                - Spring Boot 3.x + MyBatis-Plus + MySQL 8.0 + Lombok
+                - 使用 @RestController、@Service、@Mapper 三层架构
+                - Entity 用 @TableName + @TableId + @TableField(fill=...)
+                - Service 继承 IService / ServiceImpl<Mapper, Entity>
+                - Controller 统一返回 Result<T> 包装
+                - 自定义 BusinessException + @RestControllerAdvice 全局异常处理
 
-                注意：生成的代码应该是有意义的功能代码，体现软件的核心业务逻辑。
-                """, project.getName(), language, purpose, domain, functions, TARGET_LINES);
+                【代码结构强制要求 - 必须按此文件清单生成，每个文件用 // File: 文件路径 注释开头】
+                1. Application 启动类（com.highwater 包下，含 @EnableAsync @EnableScheduling @EnableTransactionManagement）
+                2. Entity 实体类（至少 5 个，围绕业务核心对象：如水质记录、RO膜组件、药剂出入库、能耗记录、巡检工单等，每个实体 15-25 个字段，含 MyBatis-Plus 注解）
+                3. Mapper 接口（继承 BaseMapper，加 @Mapper，自定义 2-3 个 @Select 注解 SQL）
+                4. Service 接口（每个实体对应一个 Service 接口，6-10 个方法）
+                5. ServiceImpl 实现类（每个 Service 对应一个实现，@Transactional，完整方法体 + 业务逻辑 + log.info）
+                6. Controller 控制器（每个业务模块一个，@RestController @RequestMapping，完整 CRUD API + 分页查询 + 状态变更等特殊接口）
+                7. Common 通用类：Result<T>、BusinessException、ErrorCode、GlobalExceptionHandler（@RestControllerAdvice）
+                8. Config 配置类：MybatisPlusConfig（分页插件）、AsyncConfig（线程池）、WebMvcConfig（CORS/拦截器）
+                9. 可选：DTO/VO 类（复杂查询场景用）
 
+                【代码量强制要求 - 非常重要】
+                - 总共必须生成 %d 行左右的完整 Java 代码（含 import、空行、注释）
+                - 每个 ServiceImpl 实现类必须有完整方法体（不是空壳），方法内要有真实的业务逻辑、参数校验、日志记录
+                - 每个 Controller 至少 5-8 个 @XxxMapping 方法
+                - 每个 Entity 至少 15 个字段
+                - 禁止生成简短框架代码，必须是充实的、有业务价值的完整类
+
+                【输出格式】
+                - 直接输出代码，不要任何解释、说明、markdown 代码块标记
+                - 每个文件用 // File: src/main/java/com/xxx/Xxx.java 注释行开头
+                - 每个文件之间空两行分隔
+                - 确保所有类的 package、import、类名互相匹配
+
+                现在开始生成：
+                """, project.getName(), language, techOptions, purpose, domain, functions, menuCtx, TARGET_LINES);
+
+        log.info("Generating code from scratch for project {}, target lines={}", projectId, TARGET_LINES);
         String generatedCode = aiClient.generate(prompt);
-        log.info("Generated {} lines of code from scratch for project {}", countLines(generatedCode), projectId);
+
+        // 如果 AI 生成的行数明显不够，追加一段扩展代码
+        int currentLines = countLines(generatedCode);
+        if (currentLines < TARGET_LINES / 2) {
+            log.warn("AI 生成代码行数 {} 低于目标 {} 的一半，尝试追加扩展 prompt", currentLines, TARGET_LINES);
+            String supplementPrompt = String.format("""
+                    请继续为软件 "%s" 补充更多 Java 代码。
+                    补充要求：
+                    1. 再生成 3-5 个 Entity、3-5 个 Mapper、3-5 个 Service/ServiceImpl、3-5 个 Controller
+                    2. 按已有代码风格保持一致（Spring Boot + MyBatis-Plus + Lombok）
+                    3. 每个 Entity 至少 12 个字段，每个 ServiceImpl 要有完整业务方法体
+                    4. 覆盖以下功能菜单对应的业务场景：
+                    %s
+                    5. 直接输出代码，不要解释，每个文件用 // File: 开头
+                    """, project.getName(), menuCtx);
+            String supplement = aiClient.generate(supplementPrompt);
+            if (supplement != null && !supplement.trim().isEmpty()) {
+                generatedCode = generatedCode + "\n\n// ============ 扩展业务模块 ============\n\n" + supplement;
+                log.info("补充代码后总行数：{}", countLines(generatedCode));
+            }
+        }
 
         return generatedCode;
     }

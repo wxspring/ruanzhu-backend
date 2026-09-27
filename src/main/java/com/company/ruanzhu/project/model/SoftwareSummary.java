@@ -24,6 +24,9 @@ public class SoftwareSummary {
     private String mainFunctions;
     private String techFeatures;
     private String techFeatureOptions;
+    private String systemOverview;
+    private String functionalFeatures;
+    private String functionMenu;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

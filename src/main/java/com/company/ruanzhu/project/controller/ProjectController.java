@@ -8,8 +8,10 @@ import com.company.ruanzhu.file.model.vo.FileRecordVO;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
 import com.company.ruanzhu.file.service.ExportService;
 import com.company.ruanzhu.file.service.FileService;
+import com.company.ruanzhu.file.storage.StorageClient;
 import com.company.ruanzhu.generate.model.vo.CodeAnalysisResult;
 import com.company.ruanzhu.generate.service.CodeAnalysisService;
+import com.company.ruanzhu.project.model.dto.EditorPayloadSaveRequest;
 import com.company.ruanzhu.project.model.dto.ProjectCreateRequest;
 import com.company.ruanzhu.project.model.dto.ProjectUpdateRequest;
 import com.company.ruanzhu.project.model.dto.SoftwareSummaryUpdateRequest;
@@ -30,6 +32,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @RestController
@@ -43,6 +48,7 @@ public class ProjectController {
     private final ExportService exportService;
     private final CodeAnalysisService codeAnalysisService;
     private final FileRecordRepository fileRecordRepository;
+    private final StorageClient storageClient;
 
     @PostMapping
     public Result<ProjectVO> createProject(@Valid @RequestBody ProjectCreateRequest request,
@@ -137,30 +143,149 @@ public class ProjectController {
             throw new BusinessException(ErrorCode.FILE_NOT_FOUND);
         }
         byte[] data = fileService.downloadFile(record.getStoragePath());
+        String fn = URLEncoder.encode(record.getFileName(), StandardCharsets.UTF_8).replace("+", "%20");
+        String disposition = String.format(
+                "attachment; filename=\"%s\"; filename*=UTF-8''%s", fn, fn);
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + record.getFileName() + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(data.length)
                 .body(data);
     }
 
     /**
      * Export all materials for a project as a ZIP file.
+     *
+     * @param depositType 交存方式：general（一般交存，默认）/ exceptional（例外交存，暂未实现）
      */
     @GetMapping("/{id}/export")
     public ResponseEntity<byte[]> exportProject(@PathVariable Long id,
-                                                 @AuthenticationPrincipal UserPrincipal principal) {
+                                                @RequestParam(defaultValue = "general") String depositType,
+                                                @AuthenticationPrincipal UserPrincipal principal) {
         try {
-            byte[] zipBytes = exportService.exportProject(id);
+            byte[] zipBytes = exportService.exportProject(id, depositType);
             String fileName = exportService.getZipFileName(id);
+            String encodedName = URLEncoder.encode(fileName, StandardCharsets.UTF_8)
+                    .replace("+", "%20");
+            // RFC 5987: 同时保留 filename*（UTF-8 首选）与 filename（ASCII 回退），兼容各浏览器
+            String disposition = String.format(
+                    "attachment; filename=\"%s\"; filename*=UTF-8''%s",
+                    encodedName, encodedName);
 
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentLength(zipBytes.length)
                     .body(zipBytes);
+        } catch (BusinessException e) {
+            // 例外交存未支持等业务异常直接抛出，保留原始错误信息
+            throw e;
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR);
         }
+    }
+
+    /**
+     * Load the latest generated program document (GENERATED_CODE) for inline editing.
+     */
+    @GetMapping("/{id}/code")
+    public Result<FileRecordVO> getProjectCode(@PathVariable Long id,
+                                               @AuthenticationPrincipal UserPrincipal principal) {
+        return Result.success(loadEditorPayload(id, "GENERATED_CODE"));
+    }
+
+    /**
+     * Save (create or update) the generated program document content.
+     */
+    @PutMapping("/{id}/code")
+    public Result<FileRecordVO> updateProjectCode(@PathVariable Long id,
+                                                  @Valid @RequestBody EditorPayloadSaveRequest request,
+                                                  @AuthenticationPrincipal UserPrincipal principal) {
+        return Result.success(saveEditorPayload(id, "GENERATED_CODE", "code", "text/plain", request));
+    }
+
+    /**
+     * Load the latest generated manual (MANUAL) for inline editing.
+     */
+    @GetMapping("/{id}/manual")
+    public Result<FileRecordVO> getProjectManual(@PathVariable Long id,
+                                                 @AuthenticationPrincipal UserPrincipal principal) {
+        return Result.success(loadEditorPayload(id, "MANUAL"));
+    }
+
+    /**
+     * Save (create or update) the manual HTML content.
+     */
+    @PutMapping("/{id}/manual")
+    public Result<FileRecordVO> updateProjectManual(@PathVariable Long id,
+                                                    @Valid @RequestBody EditorPayloadSaveRequest request,
+                                                    @AuthenticationPrincipal UserPrincipal principal) {
+        return Result.success(saveEditorPayload(id, "MANUAL", "manual", "text/html", request));
+    }
+
+    /**
+     * Load the latest file record of the given type and attach its text content.
+     */
+    private FileRecordVO loadEditorPayload(Long projectId, String fileType) {
+        projectService.getProjectById(projectId);
+        List<FileRecord> records = fileRecordRepository.findByProjectIdAndFileType(projectId, fileType);
+        if (records.isEmpty()) {
+            FileRecordVO empty = new FileRecordVO();
+            empty.setProjectId(projectId);
+            empty.setFileType(fileType);
+            return empty;
+        }
+        FileRecord record = records.get(0);
+        byte[] data = fileService.downloadFile(record.getStoragePath());
+        String content = new String(data, StandardCharsets.UTF_8);
+        FileRecordVO vo = toVO(record);
+        vo.setContent(content);
+        return vo;
+    }
+
+    /**
+     * Persist editor content to storage and upsert the file record.
+     */
+    private FileRecordVO saveEditorPayload(Long projectId, String fileType, String subDir,
+                                           String contentType, EditorPayloadSaveRequest request) {
+        projectService.getProjectById(projectId);
+        String content = request.getContent();
+        byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+        String fileName = (request.getFileName() == null || request.getFileName().isBlank())
+                ? defaultFileName(projectId, fileType)
+                : request.getFileName();
+        String storagePath = "projects/" + projectId + "/" + subDir + "/" + defaultFileName(projectId, fileType);
+
+        storageClient.upload(storagePath, new ByteArrayInputStream(contentBytes), contentType);
+
+        List<FileRecord> existing = fileRecordRepository.findByProjectIdAndFileType(projectId, fileType);
+        FileRecord record;
+        if (!existing.isEmpty()) {
+            record = existing.get(0);
+            record.setFileName(fileName);
+            record.setStoragePath(storagePath);
+            record.setFileSize((long) contentBytes.length);
+            record.setVersion((record.getVersion() == null ? 0 : record.getVersion()) + 1);
+            fileRecordRepository.updateById(record);
+        } else {
+            record = new FileRecord();
+            record.setProjectId(projectId);
+            record.setFileType(fileType);
+            record.setFileName(fileName);
+            record.setStoragePath(storagePath);
+            record.setFileSize((long) contentBytes.length);
+            record.setVersion(1);
+            fileRecordRepository.insert(record);
+        }
+        FileRecordVO vo = toVO(record);
+        vo.setContent(content);
+        return vo;
+    }
+
+    private String defaultFileName(Long projectId, String fileType) {
+        return "MANUAL".equals(fileType)
+                ? "manual_" + projectId + ".html"
+                : "generated_code_" + projectId + ".txt";
     }
 
     private FileRecordVO toVO(FileRecord record) {

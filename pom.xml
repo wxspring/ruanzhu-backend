@@ -71,6 +71,13 @@
             <version>${poi.version}</version>
         </dependency>
 
+        <!-- PDF Generation (iText 5) -->
+        <dependency>
+            <groupId>com.itextpdf</groupId>
+            <artifactId>itextpdf</artifactId>
+            <version>5.5.13</version>
+        </dependency>
+
         <!-- JWT -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
@@ -119,6 +126,21 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
+        </dependency>
+
+        <!-- 自动读取项目根目录 .env 并注入为 Spring Environment 属性源
+             （不需要 IDE 的 EnvFile 插件，maven / IDEA 运行 / java -jar 三种启动方式都生效）-->
+        <dependency>
+            <groupId>me.paulschwarz</groupId>
+            <artifactId>spring-dotenv</artifactId>
+            <version>4.0.0</version>
+        </dependency>
+
+        <!-- 用 Apache HttpClient 5 替代 JDK HttpURLConnection，避免 POST streaming 模式下遇到 401 时抛 HttpRetryException
+             (cannot retry due to server authentication, in streaming mode) -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
         </dependency>
     </dependencies>
 

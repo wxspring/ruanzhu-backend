@@ -167,6 +167,9 @@ public class ProjectServiceImpl implements ProjectService {
         vo.setMainFunctions(summary.getMainFunctions());
         vo.setTechFeatures(summary.getTechFeatures());
         vo.setTechFeatureOptions(summary.getTechFeatureOptions());
+        vo.setSystemOverview(summary.getSystemOverview());
+        vo.setFunctionalFeatures(summary.getFunctionalFeatures());
+        vo.setFunctionMenu(summary.getFunctionMenu());
         return vo;
     }
 }

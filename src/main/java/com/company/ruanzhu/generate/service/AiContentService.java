@@ -36,4 +36,10 @@ public interface AiContentService {
      */
     SoftwareSummaryVO generateAllFields(String softwareName, String category, String language,
                                          String frameworks, String codeAnalysis);
+
+    /**
+     * Generate raw text with a fully custom prompt.
+     * The caller is responsible for any placeholders (software name etc.) inside the prompt.
+     */
+    String generateCustom(String customPrompt);
 }

@@ -21,4 +21,7 @@ public class SoftwareSummaryVO {
     private String mainFunctions;
     private String techFeatures;
     private String techFeatureOptions;
+    private String systemOverview;
+    private String functionalFeatures;
+    private String functionMenu;
 }

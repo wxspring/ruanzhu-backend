@@ -17,4 +17,7 @@ public class FileRecordVO {
 
     /** List of source file paths extracted from the ZIP (transient, not persisted) */
     private List<String> sourceFiles;
+
+    /** Text content of the file (transient, only populated for editor endpoints like code/manual) */
+    private String content;
 }

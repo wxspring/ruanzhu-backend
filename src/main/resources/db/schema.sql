@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS software_summary (
     main_functions TEXT COMMENT '主要功能',
     tech_features TEXT COMMENT '技术特点',
     tech_feature_options VARCHAR(200) COMMENT '技术特点选项',
+    system_overview TEXT COMMENT '系统概述',
+    functional_features MEDIUMTEXT COMMENT '功能特点（16行完整文本）',
+    function_menu MEDIUMTEXT COMMENT '功能菜单（一行一个菜单名）',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_project_id (project_id)

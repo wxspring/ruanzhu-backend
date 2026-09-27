@@ -74,6 +74,18 @@ public class SoftwareSummaryServiceImpl implements SoftwareSummaryService {
         if (request.getTechFeatureOptions() != null) {
             summary.setTechFeatureOptions(request.getTechFeatureOptions());
         }
+        if (request.getCodeLines() != null) {
+            summary.setCodeLines(request.getCodeLines());
+        }
+        if (request.getSystemOverview() != null) {
+            summary.setSystemOverview(request.getSystemOverview());
+        }
+        if (request.getFunctionalFeatures() != null) {
+            summary.setFunctionalFeatures(request.getFunctionalFeatures());
+        }
+        if (request.getFunctionMenu() != null) {
+            summary.setFunctionMenu(request.getFunctionMenu());
+        }
 
         summary.setUpdatedAt(LocalDateTime.now());
         softwareSummaryRepository.updateById(summary);
@@ -109,6 +121,9 @@ public class SoftwareSummaryServiceImpl implements SoftwareSummaryService {
         vo.setMainFunctions(summary.getMainFunctions());
         vo.setTechFeatures(summary.getTechFeatures());
         vo.setTechFeatureOptions(summary.getTechFeatureOptions());
+        vo.setSystemOverview(summary.getSystemOverview());
+        vo.setFunctionalFeatures(summary.getFunctionalFeatures());
+        vo.setFunctionMenu(summary.getFunctionMenu());
         return vo;
     }
 }

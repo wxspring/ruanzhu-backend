@@ -13,6 +13,13 @@ public interface DocumentGenerator {
     byte[] generateWord();
 
     /**
+     * Generate a PDF document directly from source content (no DOCX→PDF conversion).
+     *
+     * @return the generated PDF as bytes
+     */
+    byte[] generatePdf();
+
+    /**
      * Get the file name for this document.
      */
     String getFileName();

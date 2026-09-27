@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${BACKEND_PORT:8080}
   servlet:
     context-path: /
 
@@ -8,6 +8,13 @@ spring:
     name: ruanzhu
   profiles:
     active: dev
+
+  # me.paulschwarz:spring-dotenv（加载项目根 .env 到 Spring Environment）
+  # 默认 mergeMode=unique 遇到重复 key 会抛 IllegalStateException: Duplicate key 直接让应用启动失败；
+  # 改为 latest（最后一行的值覆盖前面的值，和 shell dotenv 的行为一致），避免手滑重复行导致服务起不来
+  dotenv:
+    enabled: true
+    merge-mode: latest
 
   # Jackson
   jackson:
@@ -35,12 +42,14 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
-# MinIO
-minio:
-  endpoint: http://localhost:9000
-  access-key: admin
-  secret-key: admin@123456
-  bucket-name: ruanzhu-system
+## MinIO
+## 注意：所有占位符都加了 :默认值。就算 .env 文件键名写错 / 缺失，也不会出现 "Could not resolve placeholder 'XXX'"
+## 导致应用直接启动失败，最多只是 MinIO 连接不上（接口报错时再排查就行）。
+#minio:
+#  endpoint: MINIO_ENDPOINT
+#  access-key: ${MINIO_ROOT_USER:}
+#  secret-key: ${MINIO_ROOT_PASSWORD:}
+#  bucket-name: ${MINIO_BUCKET:}
 
 # Storage profile: "minio" (default, production) or "local" (dev/testing)
 storage:
@@ -48,8 +57,8 @@ storage:
 
 # JWT
 jwt:
-  secret: ruanzhu-secret-key-must-be-at-least-256-bits-long-for-hs256
-  expiration: 86400000  # 24 hours
+  secret: ${JWT_SECRET:}
+  expiration: ${JWT_EXPIRATION:86400000}  # 24 hours
 
 # Async Task
 task:
@@ -62,15 +71,19 @@ task:
 
 # AI Configuration
 ai:
-  provider: qwen  # openai or qwen
+  provider: deepseek  # openai / qwen（阿里云百炼） / deepseek（至少配置一种对应 provider 的 api-key）
   openai:
     api-key: ${OPENAI_API_KEY:}
-    base-url: https://api.openai.com
-    model: gpt-4
+    base-url: https://api.openai.com/v1
+    model: gpt-4o-mini
   qwen:
     api-key: ${QWEN_API_KEY:}
-    model: DeepSeek-V4-Flash
-    base-url: https://ws-hk7d1awi670k1rjp.cn-beijing.maas.aliyuncs.com/api/v1
+    model: qwen-plus
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  deepseek:
+    api-key: ${DEEPSEEK_API_KEY:}
+    base-url: https://api.deepseek.com
+    model: deepseek-chat
 
 # Logging
 logging:

@@ -1,6 +1,7 @@
 package com.company.ruanzhu.generate.controller;
 
 import com.company.ruanzhu.common.model.Result;
+import com.company.ruanzhu.generate.model.dto.CustomGenerateRequest;
 import com.company.ruanzhu.generate.model.vo.CodeAnalysisResult;
 import com.company.ruanzhu.generate.service.AiContentService;
 import com.company.ruanzhu.generate.service.CodeAnalysisService;
@@ -8,6 +9,7 @@ import com.company.ruanzhu.project.model.vo.SoftwareSummaryVO;
 import com.company.ruanzhu.project.service.ProjectService;
 import com.company.ruanzhu.project.model.vo.ProjectVO;
 import com.company.ruanzhu.user.security.UserPrincipal;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -99,5 +101,22 @@ public class AiController {
         };
 
         return Result.success(result);
+    }
+
+    /**
+     * Generate raw text with a user-provided custom prompt.
+     * Any placeholders (software name, version, etc.) must already be substituted by the caller.
+     */
+    @PostMapping("/projects/{projectId}/generate-custom")
+    public Result<String> generateCustom(
+            @PathVariable Long projectId,
+            @Valid @RequestBody CustomGenerateRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+
+        // ensure project exists and is accessible
+        projectService.getProjectById(projectId);
+
+        String generated = aiContentService.generateCustom(request.getPrompt());
+        return Result.success(generated);
     }
 }
