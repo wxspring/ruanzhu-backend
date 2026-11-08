@@ -22,8 +22,9 @@ public interface AiContentService {
     /**
      * Generate main functions description (主要功能) for the software.
      * Should be 800-1000 characters, describing each function's role and relationships.
+     * @param functionMenu 功能菜单，格式"子菜单（一级菜单）"，用于精确匹配模块名
      */
-    String generateMainFunctions(String softwareName, String category, String codeAnalysis);
+    String generateMainFunctions(String softwareName, String category, String codeAnalysis, String functionMenu);
 
     /**
      * Generate technical features (技术特点) for the software.
@@ -35,7 +36,7 @@ public interface AiContentService {
      * Generate all summary fields at once.
      */
     SoftwareSummaryVO generateAllFields(String softwareName, String category, String language,
-                                         String frameworks, String codeAnalysis);
+                                         String frameworks, String codeAnalysis, String functionMenu);
 
     /**
      * Generate raw text with a fully custom prompt.

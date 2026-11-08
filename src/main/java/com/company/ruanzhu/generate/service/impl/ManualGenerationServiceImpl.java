@@ -2,6 +2,7 @@ package com.company.ruanzhu.generate.service.impl;
 
 import com.company.ruanzhu.common.exception.BusinessException;
 import com.company.ruanzhu.common.exception.ErrorCode;
+import com.company.ruanzhu.common.util.LanguageEnvironment;
 import com.company.ruanzhu.generate.ai.AiClient;
 import com.company.ruanzhu.generate.service.ManualGenerationService;
 import com.company.ruanzhu.project.model.Project;
@@ -51,10 +52,11 @@ public class ManualGenerationServiceImpl implements ManualGenerationService {
         String domain = summary.getTargetDomain() != null ? summary.getTargetDomain() : "企业管理";
         String functions = summary.getMainFunctions() != null ? summary.getMainFunctions() : "基础管理功能";
         String devOs = summary.getDevOs() != null ? summary.getDevOs() : "Windows 10/11";
-        String runPlatform = summary.getRunPlatform() != null ? summary.getRunPlatform() : "Windows 10/11, Linux";
+        String runPlatform = LanguageEnvironment.runPlatformOr(summary.getLanguage(), summary.getRunPlatform());
+        String functionMenu = summary.getFunctionMenu() != null ? summary.getFunctionMenu() : "";
 
         return String.format("""
-                你是一个专业的技术文档工程师。请为以下软件生成一份完整的操作手册（HTML格式）。
+                你是一个专业的软件著作权申请材料撰写专家。请为以下软件生成一份操作手册（HTML格式）。
 
                 软件信息：
                 - 软件名称：%s
@@ -64,24 +66,22 @@ public class ManualGenerationServiceImpl implements ManualGenerationService {
                 - 主要功能：%s
                 - 开发环境：%s
                 - 运行平台：%s
+                - 功能菜单（一级菜单为模块名）：
+                %s
 
                 要求：
-                1. 生成完整的 HTML 格式文档（包含 <!DOCTYPE html>、<html>、<head>、<body> 标签）
-                2. 使用清晰的章节结构，包含目录
-                3. 包含以下章节：
-                   - 第一章：软件概述（简介、功能特点、系统要求）
-                   - 第二章：安装与配置（安装步骤、初始配置、环境要求）
-                   - 第三章：快速入门（基本操作、界面说明）
-                   - 第四章：功能详解（详细说明每个主要功能的使用方法）
-                   - 第五章：常见问题（FAQ、故障排除）
-                   - 第六章：技术支持（联系方式、更新日志）
-                4. 每个章节要有详细的说明和操作步骤
-                5. 使用专业的技术文档语言
-                6. 内容要充实、实用，总字数在 3000-5000 字左右
-                7. 使用适当的 HTML 标签（h1, h2, h3, p, ul, ol, li, table 等）
-                8. 直接输出 HTML 代码，不要有其他说明文字
+                1. 生成完整的 HTML 格式文档
+                2. 文档结构精简为两章：
+                   - 第一章 软件介绍：1.1 软件概述（200-300字，简洁说明软件定位与核心价值）
+                   - 第二章 功能介绍：2.1 登录，然后逐一介绍功能菜单中的每个模块（每个模块100-150字，说明该模块的列表页查看内容和新增/录入页需填写的字段）
+                3. 模块名称必须与功能菜单中的一级菜单名称完全一致
+                4. 语言正式、专业，符合软著申请材料规范
+                5. 内容简洁实用，总字数 1500-2500 字
+                6. 使用 HTML 标签（h1, h2, h3, p）
+                7. 直接输出 HTML 代码，不要包含 markdown 代码围栏（```）
+                8. 不要使用"待补充""XXX"等占位符
 
-                注意：生成的操作手册应该专业、完整，可以直接用于软件著作权申请。
-                """, softwareName, version, purpose, domain, functions, devOs, runPlatform);
+                注意：手册应专业简洁，以功能操作为核心，适合配合系统截图使用。
+                """, softwareName, version, purpose, domain, functions, devOs, runPlatform, functionMenu);
     }
 }

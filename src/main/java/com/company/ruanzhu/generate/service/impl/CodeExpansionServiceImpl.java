@@ -98,8 +98,13 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
         // 功能菜单上下文（如果有）
         String menuCtx = functionMenu.isEmpty() ? "（未提供功能菜单）" : functionMenu;
 
+        String persona = languagePersona(language);
+        String stack = techStack(language);
+        String fileComment = languageFileComment(language);
+
         String prompt = String.format("""
-                你是一个专业的 Java Spring Boot 后端开发工程师。请为以下软件生成完整的、可编译运行的 Spring Boot 源代码（面向软件著作权申请）。
+                %s请为以下软件生成完整的、可编译运行的源代码（面向软件著作权申请）。
+                注意：必须严格使用【编程语言】字段指定的语言生成，不得切换到其他语言。
 
                 软件名称：%s
                 编程语言：%s
@@ -111,39 +116,34 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
                 %s
 
                 【技术栈强制要求】
-                - Spring Boot 3.x + MyBatis-Plus + MySQL 8.0 + Lombok
-                - 使用 @RestController、@Service、@Mapper 三层架构
-                - Entity 用 @TableName + @TableId + @TableField(fill=...)
-                - Service 继承 IService / ServiceImpl<Mapper, Entity>
-                - Controller 统一返回 Result<T> 包装
-                - 自定义 BusinessException + @RestControllerAdvice 全局异常处理
+                %s
 
-                【代码结构强制要求 - 必须按此文件清单生成，每个文件用 // File: 文件路径 注释开头】
-                1. Application 启动类（com.highwater 包下，含 @EnableAsync @EnableScheduling @EnableTransactionManagement）
-                2. Entity 实体类（至少 5 个，围绕业务核心对象：如水质记录、RO膜组件、药剂出入库、能耗记录、巡检工单等，每个实体 15-25 个字段，含 MyBatis-Plus 注解）
-                3. Mapper 接口（继承 BaseMapper，加 @Mapper，自定义 2-3 个 @Select 注解 SQL）
-                4. Service 接口（每个实体对应一个 Service 接口，6-10 个方法）
-                5. ServiceImpl 实现类（每个 Service 对应一个实现，@Transactional，完整方法体 + 业务逻辑 + log.info）
-                6. Controller 控制器（每个业务模块一个，@RestController @RequestMapping，完整 CRUD API + 分页查询 + 状态变更等特殊接口）
-                7. Common 通用类：Result<T>、BusinessException、ErrorCode、GlobalExceptionHandler（@RestControllerAdvice）
-                8. Config 配置类：MybatisPlusConfig（分页插件）、AsyncConfig（线程池）、WebMvcConfig（CORS/拦截器）
-                9. 可选：DTO/VO 类（复杂查询场景用）
+                【代码结构强制要求 - 必须按此文件清单生成，每个文件用 %s 文件路径 注释开头】
+                1. 程序入口/启动类（包名由软件名派生，不得使用 com.highwater 等固定硬编码）
+                2. 实体/模型类（至少 5 个，围绕「面向领域」与「主要功能」的业务核心对象，每个 15-25 个字段）
+                3. 数据访问层（Mapper/DAO/Repository，含分页与条件查询）
+                4. Service 服务层接口（每个实体对应一个，6-10 个方法）
+                5. Service 实现类（完整方法体 + 业务逻辑 + 日志）
+                6. Controller/路由/Handler 控制层（完整 CRUD + 分页查询 + 状态变更等接口）
+                7. Common 通用类：统一响应 Result、业务异常、错误码、全局异常处理
+                8. Config 配置类：数据源/跨域/拦截器/异步线程池等
 
                 【代码量强制要求 - 非常重要】
-                - 总共必须生成 %d 行左右的完整 Java 代码（含 import、空行、注释）
-                - 每个 ServiceImpl 实现类必须有完整方法体（不是空壳），方法内要有真实的业务逻辑、参数校验、日志记录
-                - 每个 Controller 至少 5-8 个 @XxxMapping 方法
-                - 每个 Entity 至少 15 个字段
+                - 总共必须生成 %d 行左右的完整代码（含 import、空行、注释）
+                - 每个 Service 实现必须有完整方法体（不是空壳），方法内要有真实的业务逻辑、参数校验、日志记录
+                - 每个 Controller 至少 5-8 个接口方法
+                - 每个实体至少 15 个字段
                 - 禁止生成简短框架代码，必须是充实的、有业务价值的完整类
 
                 【输出格式】
                 - 直接输出代码，不要任何解释、说明、markdown 代码块标记
-                - 每个文件用 // File: src/main/java/com/xxx/Xxx.java 注释行开头
+                - 每个文件用 "%s" 注释行开头（注释风格随语言）
                 - 每个文件之间空两行分隔
-                - 确保所有类的 package、import、类名互相匹配
+                - 确保所有类的包名/命名空间、导入、类名互相匹配
 
                 现在开始生成：
-                """, project.getName(), language, techOptions, purpose, domain, functions, menuCtx, TARGET_LINES);
+                """, persona, project.getName(), language, techOptions, purpose, domain, functions, menuCtx,
+                stack, fileComment, TARGET_LINES, fileComment);
 
         log.info("Generating code from scratch for project {}, target lines={}", projectId, TARGET_LINES);
         String generatedCode = aiClient.generate(prompt);
@@ -153,15 +153,15 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
         if (currentLines < TARGET_LINES / 2) {
             log.warn("AI 生成代码行数 {} 低于目标 {} 的一半，尝试追加扩展 prompt", currentLines, TARGET_LINES);
             String supplementPrompt = String.format("""
-                    请继续为软件 "%s" 补充更多 Java 代码。
+                    请继续为软件 "%s" 补充更多代码（编程语言严格保持为：%s）。
                     补充要求：
-                    1. 再生成 3-5 个 Entity、3-5 个 Mapper、3-5 个 Service/ServiceImpl、3-5 个 Controller
-                    2. 按已有代码风格保持一致（Spring Boot + MyBatis-Plus + Lombok）
-                    3. 每个 Entity 至少 12 个字段，每个 ServiceImpl 要有完整业务方法体
+                    1. 再生成 3-5 个实体、3-5 个数据访问层、3-5 个 Service 接口与实现、3-5 个 Controller/路由
+                    2. 按已有代码的语言与风格保持一致
+                    3. 每个实体至少 12 个字段，每个 Service 实现要有完整业务方法体
                     4. 覆盖以下功能菜单对应的业务场景：
                     %s
-                    5. 直接输出代码，不要解释，每个文件用 // File: 开头
-                    """, project.getName(), menuCtx);
+                    5. 直接输出代码，不要解释，每个文件用 %s 开头
+                    """, project.getName(), language, menuCtx, fileComment);
             String supplement = aiClient.generate(supplementPrompt);
             if (supplement != null && !supplement.trim().isEmpty()) {
                 generatedCode = generatedCode + "\n\n// ============ 扩展业务模块 ============\n\n" + supplement;
@@ -170,6 +170,88 @@ public class CodeExpansionServiceImpl implements CodeExpansionService {
         }
 
         return generatedCode;
+    }
+
+    // ==================== 语言画像（16 种） ====================
+
+    private String languagePersona(String language) {
+        String lang = language == null ? "Java" : language.trim();
+        return switch (lang.toLowerCase(Locale.ROOT)) {
+            case "java" -> "你是一个专业的 Java Spring Boot 后端开发工程师。";
+            case "kotlin" -> "你是一个专业的 Kotlin + Spring Boot 后端开发工程师。";
+            case "python" -> "你是一个专业的 Python 后端开发工程师（FastAPI / Django / Flask 生态）。";
+            case "php" -> "你是一个专业的 PHP 后端开发工程师（Laravel / ThinkPHP 生态）。";
+            case "c#", "csharp", "cs" -> "你是一个专业的 C# .NET 后端开发工程师（ASP.NET Core / .NET 6+ 生态）。";
+            case "go" -> "你是一个专业的 Go 后端开发工程师（Gin / Echo + GORM 生态）。";
+            case "javascript", "js", "node.js", "nodejs", "node" -> "你是一个专业的 Node.js 后端开发工程师（Express / Koa / NestJS 生态）。";
+            case "typescript", "ts" -> "你是一个专业的 TypeScript + Node.js 后端开发工程师（NestJS / TypeORM 生态）。";
+            case "c++", "cpp" -> "你是一个专业的 C++ 后端开发工程师。";
+            case "c" -> "你是一个专业的 C 语言后端/嵌入式开发工程师。";
+            case "dart" -> "你是一个专业的 Dart + Flutter 开发工程师。";
+            case "ruby" -> "你是一个专业的 Ruby on Rails 后端开发工程师。";
+            case "objective-c", "objc", "objectivec" -> "你是一个专业的 Objective-C iOS 开发工程师。";
+            case "android" -> "你是一个专业的 Android 原生（Java/Kotlin）开发工程师。";
+            case "vb.net", "vbnet", "vb" -> "你是一个专业的 VB.NET 后端开发工程师（.NET 生态）。";
+            case "plc" -> "你是一个专业的 PLC 工控软件开发工程师（IEC 61131-3 ST 语言）。";
+            default -> "你是一个专业的后端软件开发工程师。";
+        };
+    }
+
+    private String techStack(String language) {
+        String lang = language == null ? "Java" : language.trim();
+        return switch (lang.toLowerCase(Locale.ROOT)) {
+            case "java" -> "- Spring Boot 3.x + MyBatis-Plus + MySQL 8.0 + Lombok\n" +
+                    "- @RestController / @Service / @Mapper 三层架构\n" +
+                    "- Entity 用 @TableName + @TableId + @TableField(fill=...)\n" +
+                    "- Service 继承 IService / ServiceImpl<Mapper, Entity>\n" +
+                    "- Controller 统一返回 Result<T>，全局 BusinessException + @RestControllerAdvice";
+            case "python" -> "- FastAPI / Django + SQLAlchemy + MySQL\n" +
+                    "- Pydantic 模型 + 依赖注入 + 路由分层\n" +
+                    "- 统一响应模型 + 全局异常处理";
+            case "php" -> "- Laravel / ThinkPHP + Eloquent ORM + MySQL\n" +
+                    "- Model + Service + Controller 三层 + 中间件\n" +
+                    "- 统一 JSON 响应 + 异常处理";
+            case "c#", "csharp", "cs" -> "- ASP.NET Core 6+ Web API + EF Core + SQL Server/MySQL\n" +
+                    "- Controller + Service + Repository 分层\n" +
+                    "- 统一 ApiResponse<T> + 全局异常过滤器";
+            case "go" -> "- Gin / Echo + GORM + MySQL\n" +
+                    "- handler + service + repository 分层\n" +
+                    "- 统一响应结构体 + 中间件错误处理";
+            case "javascript", "js", "node.js", "nodejs", "node" -> "- Node.js + Express/Koa + Sequelize + MySQL\n" +
+                    "- Router + Service + Model 分层\n" +
+                    "- 统一响应封装 + 错误处理中间件";
+            case "typescript", "ts" -> "- NestJS + TypeORM + MySQL\n" +
+                    "- Module + Controller + Service 分层\n" +
+                    "- 统一响应拦截器 + 全局异常过滤器";
+            case "kotlin" -> "- Spring Boot 3.x + Kotlin + Exposed/MyBatis-Plus + MySQL\n" +
+                    "- 数据类 + 协程 + 分层架构";
+            case "c++", "cpp" -> "- C++17 + REST framework（如 Drogon/Crow）+ MySQL\n" +
+                    "- Controller + Service + DAO 分层 + 智能指针";
+            case "c" -> "- C11 + 嵌入式/后端框架 + MySQL C API\n" +
+                    "- 模块分层 + 结构体 + 错误码";
+            case "dart" -> "- Dart + Flutter（移动端）+ Dio 网络请求\n" +
+                    "- Model + Repository + Service + UI 分层";
+            case "ruby" -> "- Ruby on Rails + ActiveRecord + MySQL\n" +
+                    "- Model + Service + Controller 分层 + Concern";
+            case "objective-c", "objc", "objectivec" -> "- Objective-C + UIKit + Foundation\n" +
+                    "- Model + ViewModel + ViewController 分层";
+            case "android" -> "- Android（Java/Kotlin）+ Room + Retrofit\n" +
+                    "- Activity/Fragment + ViewModel + Repository 分层";
+            case "vb.net", "vbnet", "vb" -> "- VB.NET + ASP.NET Core Web API + EF Core\n" +
+                    "- Controller + Service + Repository 分层";
+            case "plc" -> "- IEC 61131-3 ST 结构化文本 + PLC 运行时\n" +
+                    "- 功能块 FUNCTION_BLOCK 分层 + VAR 变量声明";
+            default -> "- 分层架构（表现层 / 业务层 / 数据层）+ MySQL\n- 统一响应 + 全局异常处理";
+        };
+    }
+
+    private String languageFileComment(String language) {
+        String lang = language == null ? "Java" : language.trim();
+        return switch (lang.toLowerCase(Locale.ROOT)) {
+            case "python", "ruby" -> "# File:";
+            case "vb.net", "vbnet", "vb" -> "' File:";
+            default -> "// File:";
+        };
     }
 
     @Override

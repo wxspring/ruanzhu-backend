@@ -19,7 +19,8 @@ public class GenerateTaskController {
 
     @PostMapping("/projects/{projectId}/generate")
     public Result<GenerateTaskVO> startGeneration(@PathVariable Long projectId,
-                                                   @RequestParam String taskType) {
+                                                   @RequestParam String taskType,
+                                                   @RequestParam(required = false) String depositType) {
         GenerateTaskVO task = taskService.createTask(projectId, taskType);
 
         // Start async execution
@@ -32,6 +33,11 @@ public class GenerateTaskController {
                 break;
             case "SUMMARY":
                 asyncGenerateService.executeSummaryGeneration(task.getId(), projectId);
+                break;
+            case "EXPORT":
+                // 导出任务：depositType 默认 general
+                String dt = (depositType == null || depositType.isBlank()) ? "general" : depositType;
+                asyncGenerateService.executeExport(task.getId(), projectId, dt);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown task type: " + taskType);

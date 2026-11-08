@@ -1,5 +1,6 @@
 package com.company.ruanzhu.generate.ai;
 
+import com.company.ruanzhu.common.util.LanguageEnvironment;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -458,9 +459,9 @@ public class QwenAiClient implements AiClient {
         String devHardware = "Intel Core i7-12700/16GB 内存/512GB SSD 以上配置的台式计算机及相关外设。";
         String runHardware = "Intel Xeon E5-2680 v4/32GB 内存/1TB SSD 以上配置的服务器主机及千兆网络设备。";
         String devOs = "Windows 10/11 64位专业版操作系统，支持本地虚拟化与容器开发环境。";
-        String devTools = "IntelliJ IDEA 2023、Visual Studio Code、Navicat、Postman、Maven 3.8 及 Git 2.40。";
-        String runPlatform = "Windows Server 2019/2022 64位或 CentOS 7/8 服务器操作系统，支持 JDK 1.8 运行。";
-        String runSupport = "JDK 1.8、Tomcat 9、MySQL 8.0、Redis 6.x、Nginx 1.24 及 Chrome 100 以上浏览器。";
+        String devTools = LanguageEnvironment.devTools(language);
+        String runPlatform = LanguageEnvironment.runPlatform(language);
+        String runSupport = LanguageEnvironment.supportStack(language);
         String purpose;
         String domain;
         String mainFunctions;
@@ -500,13 +501,13 @@ public class QwenAiClient implements AiClient {
             purpose = "为模具及零部件制造企业提供从订单到交付的全程工序数字化管控能力。";
             domain = "离散制造业、模具加工车间与生产过程执行管理领域。";
             mainFunctions = "系统围绕模具生产订单建立完整的工序流程主数据，支持订单下发、工艺路线配置、派工到岗、作业报工、工时统计与进度回写，满足多型号模具并行生产的精细化管理需要；通过设备台账、点检保养、状态监控与故障报修模块，实现关键加工设备全生命周期管理，降低非计划停机对交期的影响；依据图纸与工艺要求建立检验标准，支持首检、巡检、末检在线录入与不合格品评审、返工闭环，保证每道工序质量可追溯；同时集成物料齐套、领料退料与在制品流转功能，实时掌握车间在制数量、工序瓶颈与缺料情况，为排产调度提供依据；结合数据看板与多维度统计分析，面向班组长、工艺人员与管理人员提供订单进度、设备OEE、质量合格率、人员绩效等可视化指标，辅助快速决策与持续改进，整体提升模具交付准时率与车间运行效率。";
-            techFeatures = "系统采用Spring Boot前后端分离架构，结合MyBatis-Plus数据访问与MySQL存储，前端基于React组件化设计，支持响应式看板与实时数据刷新，集成消息队列保障报工事件可靠处理。";
+            techFeatures = "系统采用前后端分离架构，后端与数据访问层解耦，前端基于组件化设计，支持响应式看板与实时数据刷新，集成消息队列保障报工事件可靠处理。";
             techOptions = "物联网软件";
         } else if (construct) {
             purpose = "为建筑施工企业打造现场安全、进度与质量一体化的数字化管理工具。";
             domain = "建筑工程施工管理、工地安全监督与现场协同作业领域。";
             mainFunctions = "系统建立工程项目主数据，支持多项目并行管理，在线录入项目基本信息、参建单位、关键节点计划与里程碑，实时掌握各在建项目整体概况；围绕现场施工过程，提供进度填报、形象进度上传、工序报验与隐蔽验收功能，关键节点支持移动端现场拍照确认并同步至PC端台账；通过安全隐患巡检、整改、复查的闭环流程，结合整改时限提醒与超时预警，有效降低现场违规风险；集成质量检查、分部分项评定与问题整改追踪功能，做到每项质量问题责任到人、过程留痕、结果可查；同时提供合同付款、签证变更、材料进场与领用登记等辅助模块，支撑项目成本分析与资金计划；最终通过综合驾驶舱展示项目进度、安全、质量、成本多维指标，满足管理层决策和总部监管需要。";
-            techFeatures = "系统采用B/S架构，后端基于Spring Boot与JWT鉴权，前端使用React与移动端H5双端适配，集成MinIO存储现场影像，支持离线缓存与数据补录。";
+            techFeatures = "系统采用B/S架构，后端集成统一身份鉴权，前端使用响应式布局与移动端H5双端适配，集成对象存储保存现场影像，支持离线缓存与数据补录。";
             techOptions = "智慧城市软件";
         } else if (finance) {
             purpose = "为金融监管与机构经营提供资本登记、流转监测与合规分析一体化支撑。";
@@ -518,13 +519,13 @@ public class QwenAiClient implements AiClient {
             purpose = "为医疗机构提供以患者为中心的诊疗协同与质量持续改进平台。";
             domain = "医院信息一体化、临床业务协同与医疗质量管理领域。";
             mainFunctions = "系统建立患者档案主索引，支持门诊与住院场景统一身份识别，汇聚历次就诊、诊断、用药、检查检验等信息形成360度视图，便于临床快速获取完整病史；围绕诊疗主线提供医生工作站、电子病历书写、医嘱开立、处方审核、检查检验申请与结果回传闭环，关键环节内置规则校验与合理用药提醒；依托临床路径与质控规则对病历时限、诊断完整性、医嘱依从性进行自动核查，实时生成问题清单与整改任务；集成排班、床位、手术、输血、高值耗材等辅助模块，保障资源调度顺畅与使用可追溯；同时支持院内多系统集成对接与HL7标准消息交换，减少重复录入；最终通过综合运营看板面向管理者展示门诊量、住院占床、检查阳性率、平均住院日等关键指标，辅助精细化运营决策。";
-            techFeatures = "系统采用前后端分离架构，后端基于Spring Boot与安全框架保障患者数据合规，数据库结合PostgreSQL与脱敏策略，前端支持多科室差异化交互模板。";
+            techFeatures = "系统采用前后端分离架构，后端集成统一安全框架保障患者数据合规，数据库结合PostgreSQL与脱敏策略，前端支持多科室差异化交互模板。";
             techOptions = "医疗软件";
         } else if (edu) {
             purpose = "为教育机构提供教学、教务与家校协同一体化的数字化管理支撑。";
             domain = "中小学及职业院校教学管理、学生发展评价与家校协同领域。";
             mainFunctions = "系统建立学生、班级、教师、课程、教材等基础主数据，支持学期学年切换与批量导入维护，保证全校教学组织关系清晰统一；围绕教学主线提供课程表编排、备课资源共享、在线作业布置与自动批改、课堂考勤与互动记录，满足日常授课与分层教学需要；依托考试与成绩模块实现组卷、在线考试、成绩录入与多维度质量分析，可按班级、学科、知识点输出学情画像，辅助教师改进教学策略；提供学生综合素质评价与成长档案记录，对品德、学业、身心、艺术、实践进行过程化采集与学期汇总；集成家校通知、请假审批、家长端作业查看与沟通留言功能，打通学校与家庭的协同渠道；同时提供校园 OA、资产、招生报名等辅助模块，支撑校务一站式办理；最终通过校领导驾驶舱展示教学运行、学生发展、师资配置等全局指标。";
-            techFeatures = "系统采用B/S架构与响应式前端适配，后端基于Spring Boot与分布式缓存提升高并发访问能力，集成在线文档与媒体资源服务支持教学素材高效流转。";
+            techFeatures = "系统采用B/S架构与响应式前端适配，后端集成分布式缓存提升高并发访问能力，集成在线文档与媒体资源服务支持教学素材高效流转。";
             techOptions = "教育软件";
         } else if (logistics) {
             purpose = "为物流仓储企业打造库存、订单与运输一体化的供应链作业协同平台。";
@@ -542,7 +543,7 @@ public class QwenAiClient implements AiClient {
             purpose = "为行业用户提供核心业务全流程数字化与协同办公的一体化支撑能力。";
             domain = "行业信息化建设、业务流程数字化与企业协同管理领域。";
             mainFunctions = "系统建立统一的业务主数据与组织权限体系，支持多部门、多角色按职责分工协作，关键业务对象具备完整的属性档案与版本管理，保障基础信息一致可信；围绕核心业务流程提供在线录入、多级审批、状态流转、附件归档与查询检索功能，每个环节支持条件分支、时限提醒与超时升级，确保流程规范高效；依据业务规则自动生成统计台账与报表，支持多维度筛选、图表展示、Excel导出与定时分发，为管理决策提供可靠依据；集成消息通知、待办中心、工作日志与协作留言等能力，结合移动端使用场景支持异地办公与现场作业；通过操作日志、数据权限与审计追踪保障业务过程安全合规；最终形成业务办理、流程管控、数据分析、协同支撑一体化的综合管理能力，持续提升企业运营效率与精细化管理水平。";
-            techFeatures = "系统采用前后端分离的模块化架构，后端基于Spring Boot与权限控制框架，前端使用组件库快速构建表单与图表，内置工作流与规则引擎提升业务灵活度。";
+            techFeatures = "系统采用前后端分离的模块化架构，后端集成统一权限控制，前端使用组件库快速构建表单与图表，内置工作流与规则引擎提升业务灵活度。";
             techOptions = "信息安全软件";
         }
 
@@ -785,6 +786,16 @@ public class QwenAiClient implements AiClient {
     private boolean isCodeGenerationPrompt(String prompt) {
         if (prompt == null) return false;
         String lower = prompt.toLowerCase();
+        // 代码生成链路独有特征词优先判定（代码生成提示词同样含"开发目的""面向领域"，不能先排除）
+        if (prompt.contains("可编译运行的源代码") || prompt.contains("【代码结构强制要求")
+                || prompt.contains("补充更多代码") || prompt.contains("直接输出代码")) {
+            return true;
+        }
+        // 文书类提示词（功能特点/系统概述等）字段清单含"源程序量"等字样，不能当作代码生成
+        if (prompt.contains("功能特点") || prompt.contains("系统概述")
+                || prompt.contains("技术特点选项")) {
+            return false;
+        }
         if (lower.contains("技术特点") || lower.contains("tech features") || lower.contains("架构选型")) {
             return false;
         }
@@ -797,277 +808,10 @@ public class QwenAiClient implements AiClient {
     }
 
     private String generatePlaceholderCode(PromptContext ctx) {
-        String name = ctx.softwareName() != null ? ctx.softwareName() : "example";
-        String lang = ctx.language() != null ? ctx.language() : "Java";
-        String packageName = sanitizePackageName(name);
-
-        String entity1 = "User", entity2 = "Order", entity3 = "Product";
-        String table1 = "sys_user", table2 = "order_info", table3 = "product_info";
-        String service1 = "UserService", service2 = "OrderService", service3 = "ProductService";
-
-        String cat = ctx.category() != null ? ctx.category() : "";
-        String dom = ctx.domain() != null ? ctx.domain() : "";
-        if (cat.contains("建筑") || cat.contains("施工") || dom.contains("建筑") || dom.contains("施工")) {
-            entity1 = "ConstructionSite"; entity2 = "SafetyInspection"; entity3 = "HazardRecord";
-            table1 = "construction_site"; table2 = "safety_inspection"; table3 = "hazard_record";
-            service1 = "ConstructionSiteService"; service2 = "SafetyInspectionService"; service3 = "HazardRecordService";
-        } else if (cat.contains("金融") || cat.contains("资本") || cat.contains("投资") || dom.contains("金融")) {
-            entity1 = "CapitalAccount"; entity2 = "Shareholder"; entity3 = "Transaction";
-            table1 = "capital_account"; table2 = "shareholder"; table3 = "transaction";
-            service1 = "CapitalAccountService"; service2 = "ShareholderService"; service3 = "TransactionService";
-        } else if (cat.contains("医疗") || cat.contains("健康") || dom.contains("医疗")) {
-            entity1 = "Patient"; entity2 = "MedicalRecord"; entity3 = "Appointment";
-            table1 = "patient"; table2 = "medical_record"; table3 = "appointment";
-            service1 = "PatientService"; service2 = "MedicalRecordService"; service3 = "AppointmentService";
-        } else if (cat.contains("教育") || cat.contains("教学") || dom.contains("教育")) {
-            entity1 = "Student"; entity2 = "Course"; entity3 = "Grade";
-            table1 = "student"; table2 = "course"; table3 = "grade";
-            service1 = "StudentService"; service2 = "CourseService"; service3 = "GradeService";
-        } else if (cat.contains("物流") || cat.contains("仓储") || dom.contains("物流")) {
-            entity1 = "Warehouse"; entity2 = "Shipment"; entity3 = "Inventory";
-            table1 = "warehouse"; table2 = "shipment"; table3 = "inventory";
-            service1 = "WarehouseService"; service2 = "ShipmentService"; service3 = "InventoryService";
-        } else if (cat.contains("电商") || cat.contains("零售") || dom.contains("电商")) {
-            entity1 = "Customer"; entity2 = "Order"; entity3 = "Product";
-            table1 = "customer"; table2 = "order_info"; table3 = "product_info";
-            service1 = "CustomerService"; service2 = "OrderService"; service3 = "ProductService";
-        } else if (cat.contains("生产") || cat.contains("制造") || dom.contains("制造")) {
-            entity1 = "WorkOrder"; entity2 = "ProductionLine"; entity3 = "Material";
-            table1 = "work_order"; table2 = "production_line"; table3 = "material";
-            service1 = "WorkOrderService"; service2 = "ProductionLineService"; service3 = "MaterialService";
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("// File: Application.java\n");
-        sb.append("package com.example.").append(packageName).append(";\n\n");
-        sb.append("import org.springframework.boot.SpringApplication;\n");
-        sb.append("import org.springframework.boot.autoconfigure.SpringBootApplication;\n");
-        sb.append("import org.springframework.scheduling.annotation.EnableAsync;\n\n");
-        sb.append("/**\n");
-        sb.append(" * ").append(name).append(" 启动类\n");
-        sb.append(" * 软件著作权申请 - 源代码占位版本\n");
-        sb.append(" */\n");
-        sb.append("@SpringBootApplication\n");
-        sb.append("@EnableAsync\n");
-        sb.append("public class Application {\n\n");
-        sb.append("    public static void main(String[] args) {\n");
-        sb.append("        SpringApplication.run(Application.class, args);\n");
-        sb.append("    }\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: entity/").append(entity1).append(".java\n");
-        sb.append("package com.example.").append(packageName).append(".entity;\n\n");
-        sb.append("import jakarta.persistence.*;\n");
-        sb.append("import lombok.Data;\n\n");
-        sb.append("@Data\n");
-        sb.append("@Entity\n");
-        sb.append("@Table(name = \"").append(table1).append("\")\n");
-        sb.append("public class ").append(entity1).append(" {\n\n");
-        sb.append("    @Id\n");
-        sb.append("    @GeneratedValue(strategy = GenerationType.IDENTITY)\n");
-        sb.append("    private Long id;\n\n");
-        sb.append("    @Column(nullable = false)\n");
-        sb.append("    private String name;\n\n");
-        sb.append("    @Column\n");
-        sb.append("    private String description;\n\n");
-        sb.append("    @Column\n");
-        sb.append("    private Boolean enabled = true;\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: entity/").append(entity2).append(".java\n");
-        sb.append("package com.example.").append(packageName).append(".entity;\n\n");
-        sb.append("import jakarta.persistence.*;\n");
-        sb.append("import lombok.Data;\n");
-        sb.append("import java.time.LocalDateTime;\n\n");
-        sb.append("@Data\n");
-        sb.append("@Entity\n");
-        sb.append("@Table(name = \"").append(table2).append("\")\n");
-        sb.append("public class ").append(entity2).append(" {\n\n");
-        sb.append("    @Id\n");
-        sb.append("    @GeneratedValue(strategy = GenerationType.IDENTITY)\n");
-        sb.append("    private Long id;\n\n");
-        sb.append("    @Column(nullable = false)\n");
-        sb.append("    private String name;\n\n");
-        sb.append("    @Column(length = 32)\n");
-        sb.append("    private String status;\n\n");
-        sb.append("    @Column\n");
-        sb.append("    private LocalDateTime createdAt;\n\n");
-        sb.append("    @Column\n");
-        sb.append("    private LocalDateTime updatedAt;\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: entity/").append(entity3).append(".java\n");
-        sb.append("package com.example.").append(packageName).append(".entity;\n\n");
-        sb.append("import jakarta.persistence.*;\n");
-        sb.append("import lombok.Data;\n\n");
-        sb.append("@Data\n");
-        sb.append("@Entity\n");
-        sb.append("@Table(name = \"").append(table3).append("\")\n");
-        sb.append("public class ").append(entity3).append(" {\n\n");
-        sb.append("    @Id\n");
-        sb.append("    @GeneratedValue(strategy = GenerationType.IDENTITY)\n");
-        sb.append("    private Long id;\n\n");
-        sb.append("    @Column(nullable = false)\n");
-        sb.append("    private String name;\n\n");
-        sb.append("    @Column(length = 500)\n");
-        sb.append("    private String description;\n\n");
-        sb.append("    @Column\n");
-        sb.append("    private Integer stock;\n\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: repository/").append(entity1).append("Repository.java\n");
-        sb.append("package com.example.").append(packageName).append(".repository;\n\n");
-        sb.append("import com.example.").append(packageName).append(".entity.").append(entity1).append(";\n");
-        sb.append("import org.springframework.data.jpa.repository.JpaRepository;\n");
-        sb.append("import org.springframework.stereotype.Repository;\n\n");
-        sb.append("@Repository\n");
-        sb.append("public interface ").append(entity1).append("Repository extends JpaRepository<").append(entity1).append(", Long> {\n");
-        sb.append("    ").append(entity1).append(" findByName(String name);\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: repository/").append(entity2).append("Repository.java\n");
-        sb.append("package com.example.").append(packageName).append(".repository;\n\n");
-        sb.append("import com.example.").append(packageName).append(".entity.").append(entity2).append(";\n");
-        sb.append("import org.springframework.data.jpa.repository.JpaRepository;\n");
-        sb.append("import org.springframework.stereotype.Repository;\n");
-        sb.append("import java.util.List;\n\n");
-        sb.append("@Repository\n");
-        sb.append("public interface ").append(entity2).append("Repository extends JpaRepository<").append(entity2).append(", Long> {\n");
-        sb.append("    List<").append(entity2).append("> findByStatus(String status);\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: service/").append(service1).append(".java\n");
-        sb.append("package com.example.").append(packageName).append(".service;\n\n");
-        sb.append("import com.example.").append(packageName).append(".entity.").append(entity1).append(";\n");
-        sb.append("import java.util.List;\n\n");
-        sb.append("public interface ").append(service1).append(" {\n");
-        sb.append("    List<").append(entity1).append("> findAll();\n");
-        sb.append("    ").append(entity1).append(" findById(Long id);\n");
-        sb.append("    ").append(entity1).append(" save(").append(entity1).append(" entity);\n");
-        sb.append("    ").append(entity1).append(" update(Long id, ").append(entity1).append(" entity);\n");
-        sb.append("    void delete(Long id);\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: service/impl/").append(service1).append("Impl.java\n");
-        sb.append("package com.example.").append(packageName).append(".service.impl;\n\n");
-        sb.append("import com.example.").append(packageName).append(".entity.").append(entity1).append(";\n");
-        sb.append("import com.example.").append(packageName).append(".repository.").append(entity1).append("Repository;\n");
-        sb.append("import com.example.").append(packageName).append(".service.").append(service1).append(";\n");
-        sb.append("import lombok.RequiredArgsConstructor;\n");
-        sb.append("import lombok.extern.slf4j.Slf4j;\n");
-        sb.append("import org.springframework.stereotype.Service;\n");
-        sb.append("import java.util.List;\n");
-        sb.append("import java.util.Optional;\n\n");
-        sb.append("@Slf4j\n");
-        sb.append("@Service\n");
-        sb.append("@RequiredArgsConstructor\n");
-        sb.append("public class ").append(service1).append("Impl implements ").append(service1).append(" {\n\n");
-        sb.append("    private final ").append(entity1).append("Repository repository;\n\n");
-        sb.append("    @Override\n");
-        sb.append("    public List<").append(entity1).append("> findAll() {\n");
-        sb.append("        log.debug(\"Querying all ").append(entity1).append(" records\");\n");
-        sb.append("        return repository.findAll();\n");
-        sb.append("    }\n\n");
-        sb.append("    @Override\n");
-        sb.append("    public ").append(entity1).append(" findById(Long id) {\n");
-        sb.append("        Optional<").append(entity1).append("> entity = repository.findById(id);\n");
-        sb.append("        return entity.orElseThrow(() -> new RuntimeException(\"").append(entity1).append(" not found: \" + id));\n");
-        sb.append("    }\n\n");
-        sb.append("    @Override\n");
-        sb.append("    public ").append(entity1).append(" save(").append(entity1).append(" entity) {\n");
-        sb.append("        log.info(\"Saving ").append(entity1).append(": {}\", entity.getName());\n");
-        sb.append("        return repository.save(entity);\n");
-        sb.append("    }\n\n");
-        sb.append("    @Override\n");
-        sb.append("    public ").append(entity1).append(" update(Long id, ").append(entity1).append(" entity) {\n");
-        sb.append("        ").append(entity1).append(" existing = findById(id);\n");
-        sb.append("        existing.setName(entity.getName());\n");
-        sb.append("        existing.setDescription(entity.getDescription());\n");
-        sb.append("        return repository.save(existing);\n");
-        sb.append("    }\n\n");
-        sb.append("    @Override\n");
-        sb.append("    public void delete(Long id) {\n");
-        sb.append("        log.info(\"Deleting ").append(entity1).append(": {}\", id);\n");
-        sb.append("        repository.deleteById(id);\n");
-        sb.append("    }\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: controller/").append(entity1).append("Controller.java\n");
-        sb.append("package com.example.").append(packageName).append(".controller;\n\n");
-        sb.append("import com.example.").append(packageName).append(".entity.").append(entity1).append(";\n");
-        sb.append("import com.example.").append(packageName).append(".service.").append(service1).append(";\n");
-        sb.append("import com.example.").append(packageName).append(".dto.Result;\n");
-        sb.append("import lombok.RequiredArgsConstructor;\n");
-        sb.append("import org.springframework.web.bind.annotation.*;\n");
-        sb.append("import java.util.List;\n\n");
-        sb.append("@RestController\n");
-        sb.append("@RequestMapping(\"/api/").append(table1).append("\")\n");
-        sb.append("@RequiredArgsConstructor\n");
-        sb.append("public class ").append(entity1).append("Controller {\n\n");
-        sb.append("    private final ").append(service1).append(" service;\n\n");
-        sb.append("    @GetMapping\n");
-        sb.append("    public Result<List<").append(entity1).append("> list() {\n");
-        sb.append("        return Result.success(service.findAll());\n");
-        sb.append("    }\n\n");
-        sb.append("    @PostMapping\n");
-        sb.append("    public Result<").append(entity1).append(" create(@RequestBody ").append(entity1).append(" entity) {\n");
-        sb.append("        return Result.success(service.save(entity));\n");
-        sb.append("    }\n\n");
-        sb.append("    @GetMapping(\"/{id}\")\n");
-        sb.append("    public Result<").append(entity1).append(" get(@PathVariable Long id) {\n");
-        sb.append("        return Result.success(service.findById(id));\n");
-        sb.append("    }\n\n");
-        sb.append("    @PutMapping(\"/{id}\")\n");
-        sb.append("    public Result<").append(entity1).append(" update(@PathVariable Long id, @RequestBody ").append(entity1).append(" entity) {\n");
-        sb.append("        return Result.success(service.update(id, entity));\n");
-        sb.append("    }\n\n");
-        sb.append("    @DeleteMapping(\"/{id}\")\n");
-        sb.append("    public Result<Void> delete(@PathVariable Long id) {\n");
-        sb.append("        service.delete(id);\n");
-        sb.append("        return Result.success();\n");
-        sb.append("    }\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: dto/Result.java\n");
-        sb.append("package com.example.").append(packageName).append(".dto;\n\n");
-        sb.append("import lombok.Data;\n\n");
-        sb.append("@Data\n");
-        sb.append("public class Result<T> {\n");
-        sb.append("    private Integer code;\n");
-        sb.append("    private String message;\n");
-        sb.append("    private T data;\n\n");
-        sb.append("    public static <T> Result<T> success(T data) {\n");
-        sb.append("        Result<T> r = new Result<>();\n");
-        sb.append("        r.setCode(200);\n");
-        sb.append("        r.setMessage(\"success\");\n");
-        sb.append("        r.setData(data);\n");
-        sb.append("        return r;\n");
-        sb.append("    }\n\n");
-        sb.append("    public static <T> Result<T> error(String message) {\n");
-        sb.append("        Result<T> r = new Result<>();\n");
-        sb.append("        r.setCode(500);\n");
-        sb.append("        r.setMessage(message);\n");
-        sb.append("        return r;\n");
-        sb.append("    }\n");
-        sb.append("}\n\n");
-
-        sb.append("// File: config/WebConfig.java\n");
-        sb.append("package com.example.").append(packageName).append(".config;\n\n");
-        sb.append("import org.springframework.context.annotation.Configuration;\n");
-        sb.append("import org.springframework.web.servlet.config.annotation.CorsRegistry;\n");
-        sb.append("import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;\n\n");
-        sb.append("@Configuration\n");
-        sb.append("public class WebConfig implements WebMvcConfigurer {\n\n");
-        sb.append("    @Override\n");
-        sb.append("    public void addCorsMappings(CorsRegistry registry) {\n");
-        sb.append("        registry.addMapping(\"/api/**\")\n");
-        sb.append("                .allowedOrigins(\"*\")\n");
-        sb.append("                .allowedMethods(\"GET\", \"POST\", \"PUT\", \"DELETE\", \"OPTIONS\")\n");
-        sb.append("                .allowedHeaders(\"*\");\n");
-        sb.append("    }\n");
-        sb.append("}\n");
-
-        return sb.toString();
+        String name = ctx.softwareName() != null ? ctx.softwareName() : "Soft";
+        String domain = ctx.domain() != null ? ctx.domain() : "";
+        String language = ctx.language() != null && !ctx.language().isBlank() ? ctx.language() : "Java";
+        return MultiLanguageCodeTemplate.build(language, name, domain);
     }
 
     private String sanitizePackageName(String name) {

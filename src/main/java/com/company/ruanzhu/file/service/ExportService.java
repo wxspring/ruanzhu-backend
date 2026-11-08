@@ -1,10 +1,12 @@
 package com.company.ruanzhu.file.service;
 
 import com.company.ruanzhu.common.exception.BusinessException;
+import com.company.ruanzhu.file.enums.FileType;
 import com.company.ruanzhu.file.converter.WordToPdfConverter;
 import com.company.ruanzhu.file.generator.ManualDocGenerator;
 import com.company.ruanzhu.file.generator.SourceCodeDocGenerator;
 import com.company.ruanzhu.file.generator.SummaryTxtGenerator;
+import com.company.ruanzhu.file.model.FileRecord;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
 import com.company.ruanzhu.file.storage.StorageClient;
 import com.company.ruanzhu.generate.service.CodeExpansionService;
@@ -12,10 +14,14 @@ import com.company.ruanzhu.project.model.vo.ProjectVO;
 import com.company.ruanzhu.project.service.ProjectService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -104,6 +110,64 @@ public class ExportService {
     public String getZipFileName(Long projectId) {
         ProjectVO project = projectService.getProjectById(projectId);
         return project.getName() + ".zip";
+    }
+
+    /**
+     * 异步导出：生成 ZIP → 上传 MinIO → 记录 file_record，返回记录供前端下载。
+     * 由 AsyncGenerateService.executeExport 调用，调用方负责更新任务进度。
+     *
+     * @return 已保存的 FileRecord（包含 storagePath / fileName / fileSize）
+     */
+    public FileRecord exportAndUpload(Long projectId, String depositType) throws IOException {
+        ProjectVO project = projectService.getProjectById(projectId);
+        String baseName = project.getName();
+
+        // 1. 生成 ZIP 字节（复用同步逻辑）
+        byte[] zipBytes = exportProject(projectId, depositType);
+
+        // 2. 上传到 MinIO
+        String fileName = baseName + ".zip";
+        String storagePath = "projects/" + projectId + "/export/" + fileName;
+        storageClient.upload(storagePath, new ByteArrayInputStream(zipBytes), "application/zip");
+        log.info("导出 ZIP 已上传: projectId={}, storagePath={}, size={}B", projectId, storagePath, zipBytes.length);
+
+        // 3. 写入 / 更新 file_record（同一项目只保留一份最新导出）
+        List<FileRecord> existing = fileRecordRepository.findByProjectIdAndFileType(projectId, FileType.EXPORT_ZIP);
+        FileRecord record;
+        if (!existing.isEmpty()) {
+            record = existing.get(0);
+            record.setStoragePath(storagePath);
+            record.setFileName(fileName);
+            record.setFileSize((long) zipBytes.length);
+            record.setVersion(record.getVersion() == null ? 1 : record.getVersion() + 1);
+            fileRecordRepository.updateById(record);
+        } else {
+            record = new FileRecord();
+            record.setProjectId(projectId);
+            record.setFileType(FileType.EXPORT_ZIP);
+            record.setFileName(fileName);
+            record.setStoragePath(storagePath);
+            record.setFileSize((long) zipBytes.length);
+            record.setVersion(1);
+            record.setCreatedAt(LocalDateTime.now());
+            fileRecordRepository.insert(record);
+        }
+        return record;
+    }
+
+    /**
+     * 异步打包上传 ZIP。供保存代码/手册/概要后调用，不阻塞保存操作。
+     * 失败仅记录日志，不影响保存流程。
+     */
+    @Async("taskExecutor")
+    public void exportAndUploadAsync(Long projectId, String depositType) {
+        try {
+            log.info("Async export pack started: projectId={}", projectId);
+            exportAndUpload(projectId, depositType);
+            log.info("Async export pack completed: projectId={}", projectId);
+        } catch (Exception e) {
+            log.error("Async export pack failed: projectId={}", projectId, e);
+        }
     }
 
     private void addZipEntry(ZipOutputStream zos, String fileName, byte[] content) throws IOException {

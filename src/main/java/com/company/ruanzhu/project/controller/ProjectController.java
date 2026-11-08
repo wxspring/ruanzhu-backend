@@ -3,6 +3,7 @@ package com.company.ruanzhu.project.controller;
 import com.company.ruanzhu.common.model.Result;
 import com.company.ruanzhu.common.util.PageRequest;
 import com.company.ruanzhu.common.util.PageResult;
+import com.company.ruanzhu.file.enums.FileType;
 import com.company.ruanzhu.file.model.FileRecord;
 import com.company.ruanzhu.file.model.vo.FileRecordVO;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
@@ -186,6 +187,31 @@ public class ProjectController {
     }
 
     /**
+     * 下载异步导出任务生成并上传到 MinIO 的最新 ZIP 包。
+     * 配合 {@code POST /api/tasks/projects/{id}/generate?taskType=EXPORT} 使用：
+     * 前端先启动异步导出任务，轮询到 SUCCESS 后再调用此接口下载。
+     */
+    @GetMapping("/{id}/export/download")
+    public ResponseEntity<byte[]> downloadExportZip(@PathVariable Long id,
+                                                    @AuthenticationPrincipal UserPrincipal principal) {
+        List<FileRecord> records = fileRecordRepository.findByProjectIdAndFileType(id, FileType.EXPORT_ZIP);
+        if (records.isEmpty()) {
+            throw new BusinessException(ErrorCode.FILE_NOT_FOUND);
+        }
+        FileRecord latest = records.get(0);
+        byte[] data = storageClient.download(latest.getStoragePath());
+        String encodedName = URLEncoder.encode(latest.getFileName(), StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        String disposition = String.format(
+                "attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedName, encodedName);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(data.length)
+                .body(data);
+    }
+
+    /**
      * Load the latest generated program document (GENERATED_CODE) for inline editing.
      */
     @GetMapping("/{id}/code")
@@ -279,6 +305,10 @@ public class ProjectController {
         }
         FileRecordVO vo = toVO(record);
         vo.setContent(content);
+
+        // 保存代码/手册后异步打包上传 ZIP，导出时可直接下载
+        exportService.exportAndUploadAsync(projectId, "general");
+
         return vo;
     }
 

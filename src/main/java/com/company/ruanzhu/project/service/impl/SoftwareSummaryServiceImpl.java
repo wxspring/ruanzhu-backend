@@ -2,6 +2,7 @@ package com.company.ruanzhu.project.service.impl;
 
 import com.company.ruanzhu.common.exception.BusinessException;
 import com.company.ruanzhu.common.exception.ErrorCode;
+import com.company.ruanzhu.file.service.ExportService;
 import com.company.ruanzhu.project.model.SoftwareSummary;
 import com.company.ruanzhu.project.model.dto.SoftwareSummaryUpdateRequest;
 import com.company.ruanzhu.project.model.vo.SoftwareSummaryVO;
@@ -18,6 +19,7 @@ import java.time.LocalDateTime;
 public class SoftwareSummaryServiceImpl implements SoftwareSummaryService {
 
     private final SoftwareSummaryRepository softwareSummaryRepository;
+    private final ExportService exportService;
 
     @Override
     public SoftwareSummaryVO getByProjectId(Long projectId) {
@@ -89,6 +91,10 @@ public class SoftwareSummaryServiceImpl implements SoftwareSummaryService {
 
         summary.setUpdatedAt(LocalDateTime.now());
         softwareSummaryRepository.updateById(summary);
+
+        // 保存概要后异步打包上传 ZIP，导出时可直接下载
+        exportService.exportAndUploadAsync(projectId, "general");
+
         return toVO(summary);
     }
 

@@ -1,5 +1,6 @@
 package com.company.ruanzhu.file.generator;
 
+import com.company.ruanzhu.common.util.LanguageEnvironment;
 import com.company.ruanzhu.file.model.FileRecord;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
 import com.company.ruanzhu.file.storage.StorageClient;
@@ -17,6 +18,7 @@ import org.apache.poi.xwpf.usermodel.*;
 import org.apache.poi.wp.usermodel.HeaderFooterType;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.math.BigInteger;
@@ -48,6 +50,13 @@ public class ManualDocGenerator implements DocumentGenerator {
     static final int BL  = LPP * BP;   // 900
     static final int TOTAL_OUT_LINES = FL + BL; // 1800
 
+    // 图片按"逻辑行"折算：权重由实际渲染高度推导，使 DOCX 与 PDF 分页一致
+    // 渲染规则：宽度 420pt（适配 A4 正文宽度），高度按原始宽高比等比缩放，最高 320pt
+    static final int IMAGE_LINE_WEIGHT = 10;
+    static final float IMG_WIDTH_PT = 420f;
+    static final float IMG_MAX_HEIGHT_PT = 320f;
+    static final float LINE_PT = 16f;
+
     private static final String FONT_CN = "宋体";
     private static final String FONT_H  = "黑体";
     private static final int FS_BODY = 10;
@@ -56,10 +65,42 @@ public class ManualDocGenerator implements DocumentGenerator {
     private static final int FS_TITLE = 18;
     private static final int LSP = 320; // 16pt 固定行距 twips
 
+    // ===== 章节标题常量：目录与正文统一引用，避免标题不一致、小节缺失或跳号 =====
+    private static final String CH1 = "第一章 软件概述";
+    private static final String CH2 = "第二章 安装与配置";
+    private static final String CH3 = "第三章 功能介绍";
+    private static final String CH4 = "第四章 操作指南";
+    private static final String CH5 = "第五章 维护与常见问题";
+    private static final String S1_1 = "1.1 软件简介";
+    private static final String S1_2 = "1.2 应用领域";
+    private static final String S1_3 = "1.3 技术特点";
+    private static final String S1_4 = "1.4 系统架构";
+    private static final String S2_1 = "2.1 运行环境";
+    private static final String S2_2 = "2.2 安装步骤";
+    private static final String S2_3 = "2.3 初始配置";
+    private static final String S3_1 = "3.1 登录系统";
+    private static final String S3_2 = "3.2 工作台首页";
+    private static final String S4_1 = "4.1 登录系统";
+    private static final String S4_2 = "4.2 工作台首页";
+    private static final String S5_1 = "5.1 系统维护";
+    private static final String S5_2 = "5.2 常见问题";
+    private static final String S5_3 = "5.3 技术支持";
+
     private final ProjectService projectService;
     private final FileRecordRepository fileRecordRepository;
     private final StorageClient storageClient;
     private final Long projectId;
+
+    // 缓存 collectAllLines 结果，避免 generateWord / generatePdf 两次调用时重复生成截图（截图耗时~25s）
+    private List<LineItem> cachedAllLines;
+
+    /** 截图缓存：同一项目、同一功能菜单重复导出时复用，最多保留 4 份 */
+    private static final Map<String, Map<String, byte[]>> SHOT_CACHE =
+            java.util.Collections.synchronizedMap(new LinkedHashMap<>() {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, Map<String, byte[]>> e) {
+                    return size() > 4;
+                }
+            });
 
     public ManualDocGenerator(ProjectService projectService,
                               FileRecordRepository fileRecordRepository,
@@ -79,20 +120,18 @@ public class ManualDocGenerator implements DocumentGenerator {
             page(doc);
             hf(doc, project.getName(), summary != null ? summary.getVersion() : "V1.0");
 
-            // 收集所有逻辑行（扉页标题、版本、目录、章节标题、正文段等每个都算 1 行，统一计数才符合"每页30行"硬规格）
+            // 收集所有逻辑行（扉页标题、版本、目录、章节标题、正文段等每个都算 1 行）
             List<LineItem> all = collectAllLines(project, summary);
             int N = all.size();
-            List<LineItem> front = sliceFront(all);   // 固定 900
-            List<LineItem> back  = sliceBack(all);    // 固定 900
+            // 补齐到整页（30 逻辑行的整数倍），避免末页不足
+            padToPage(all);
+            int pages = totalWeight(all) / LPP;
 
-            writeBlock(doc, front, true);     // 前 900 行，页 30 末也 break → 30 个 = 跳到新页 31
-            writeBlock(doc, back, false);      // 后 900 行，末尾不 break → 29 个
-            // 总段数 = 900 + 900 = 1800；总 break = 30 + 29 = 59 → 正好 60 页 ✅
+            writeBlock(doc, all, false);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
-            log.info("说明文档：原总行数={} 输出=60页(前30+后30)x{}行 中间省略={}",
-                    N, LPP, Math.max(0, N - TOTAL_OUT_LINES));
+            log.info("说明文档：原总行数={} 输出={}页x{}行", N, pages, LPP);
             return out.toByteArray();
         } catch (Exception e) {
             log.error("generateWord failed", e);
@@ -106,36 +145,54 @@ public class ManualDocGenerator implements DocumentGenerator {
 
     /**
      * 用 iText 直接生成 PDF。A4，每页 30 行，中文用系统宋体/黑体。
+     * 分页逻辑与 DOCX 一致：按 lineWeight 累加，到 30 时 newPage。
      */
     @Override public byte[] generatePdf() {
         ProjectVO project = projectService.getProjectById(projectId);
         SoftwareSummaryVO summary = project.getSoftwareSummary();
-        List<LineItem> allLines = collectAllLines(project, summary);
+        List<LineItem> all = new ArrayList<>(collectAllLines(project, summary));
+        // 补齐到整页
+        padToPage(all);
+        int pages = totalWeight(all) / LPP;
 
-        List<LineItem> front = sliceFront(allLines);
-        List<LineItem> back  = sliceBack(allLines);
-
-        com.itextpdf.text.Document doc = new com.itextpdf.text.Document(PageSize.A4, 28.3f, 28.3f, 22.7f, 22.7f);
+        // 与 DOCX 一致：左右 20mm(56.7pt)、上下 15mm(42.5pt)
+        com.itextpdf.text.Document doc = new com.itextpdf.text.Document(PageSize.A4, 56.7f, 56.7f, 42.5f, 42.5f);
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            PdfWriter.getInstance(doc, out);
+            PdfWriter writer = PdfWriter.getInstance(doc, out);
+
+            // 字体按候选顺序回退，避免部署环境缺少某一字体时直接失败
+            BaseFont song = loadCjkFont("simsun.ttc,0", "msyh.ttc,0", "simhei.ttf");
+            BaseFont hei  = loadCjkFont("simhei.ttf", "msyhbd.ttc,0", "simsun.ttc,0");
+            final Font pageFont = new Font(song, 9);
+
+            // PDF 页脚页码，与 DOCX 的 PAGE 域保持一致
+            writer.setPageEvent(new com.itextpdf.text.pdf.PdfPageEventHelper() {
+                @Override public void onEndPage(PdfWriter w, com.itextpdf.text.Document d) {
+                    try {
+                        com.itextpdf.text.pdf.ColumnText.showTextAligned(
+                                w.getDirectContent(), com.itextpdf.text.Element.ALIGN_CENTER,
+                                new com.itextpdf.text.Phrase("第 " + w.getPageNumber() + " 页", pageFont),
+                                (d.left() + d.right()) / 2, d.bottom() - 20, 0);
+                    } catch (Exception e) {
+                        log.warn("PDF 页脚页码写入失败", e);
+                    }
+                }
+            });
             doc.open();
 
-            BaseFont song = BaseFont.createFont("C:\\Windows\\Fonts\\simsun.ttc,0", BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
-            BaseFont hei  = BaseFont.createFont("C:\\Windows\\Fonts\\simhei.ttf", BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+            // 图片渲染尺寸由 LineItem 按原始宽高比计算，DOCX/PDF 共用
 
-            float leading = 16f; // 与 DOCX 一致
-
-            List<LineItem> all = new ArrayList<>(front);
-            all.addAll(back);
-
-            int lineNo = 0;
+            int onPage = 0;
+            int idx = 0;
             for (LineItem item : all) {
-                lineNo++;
+                idx++;
+                onPage += item.lineWeight;
                 if (item.kind == Kind.IMAGE && item.imageData != null) {
                     try {
                         com.itextpdf.text.Image img = com.itextpdf.text.Image.getInstance(item.imageData);
-                        img.scaleToFit(420, 252);
+                        // 按原始宽高比等比缩放（宽度 420pt，最高 320pt），避免截图被拉伸变形
+                        img.scaleAbsolute(item.imageWidthPt, item.imageHeightPt);
                         img.setAlignment(com.itextpdf.text.Image.ALIGN_CENTER);
                         doc.add(img);
                     } catch (Exception e) {
@@ -145,25 +202,32 @@ public class ManualDocGenerator implements DocumentGenerator {
                     float fs;
                     BaseFont bf;
                     int style = Font.NORMAL;
+                    boolean center = false;
                     switch (item.kind) {
-                        case TITLE: fs = FS_TITLE; bf = hei; break;
-                        case H1:    fs = FS_H1;    bf = hei; break;
-                        case H2:    fs = FS_H2;    bf = hei; break;
-                        default:    fs = FS_BODY;  bf = song; break;
+                        case TITLE:          fs = FS_TITLE; bf = hei;  center = true; break;
+                        case VERSION:        fs = FS_H2;    bf = song; center = true; break;
+                        case H1:             fs = FS_H1;    bf = hei;  break;
+                        case H2:             fs = FS_H2;    bf = hei;  break;
+                        case FIGURE_CAPTION: fs = 9;         bf = song; center = true; break;
+                        default:             fs = FS_BODY;  bf = song; break;
                     }
                     Font font = new Font(bf, fs, style, BaseColor.BLACK);
                     Paragraph p = new Paragraph(item.text == null ? "" : item.text, font);
-                    p.setLeading(leading);
+                    p.setLeading(item.lineWeight * 16f);
                     p.setSpacingAfter(0);
                     p.setSpacingBefore(0);
+                    if (center) p.setAlignment(Paragraph.ALIGN_CENTER);
+                    if (item.kind == Kind.BODY) p.setFirstLineIndent(21f);
                     doc.add(p);
                 }
-                if (lineNo % LPP == 0 && lineNo < all.size()) {
+                // 累加 lineWeight 超过或达到本页容量时 newPage
+                if (onPage >= LPP && idx < all.size()) {
+                    onPage = onPage - LPP;
                     doc.newPage();
                 }
             }
             doc.close();
-            log.info("说明文档 PDF 生成：{} 行，每页 {} 行", all.size(), LPP);
+            log.info("说明文档 PDF 生成：{} 行，{} 页，每页 {} 行", all.size(), pages, LPP);
             return out.toByteArray();
         } catch (Exception e) {
             log.error("generatePdf failed", e);
@@ -185,91 +249,666 @@ public class ManualDocGenerator implements DocumentGenerator {
 
     // --- 行模型 ---
 
-    enum Kind { TITLE, VERSION, TOC, H1, H2, BODY, BLANK, IMAGE }
+    enum Kind { TITLE, VERSION, TOC, H1, H2, BODY, BLANK, IMAGE, FIGURE_CAPTION }
 
     static class LineItem {
         Kind kind; String text; boolean bold; byte[] imageData; String imageFormat;
+        /** 图片渲染尺寸（按原始宽高比等比缩放），pt */
+        float imageWidthPt = IMG_WIDTH_PT;
+        float imageHeightPt = IMAGE_LINE_WEIGHT * LINE_PT;
+        /** 该项占多少"逻辑行"，影响每页 30 行的分页计数；图片按实际渲染高度折算 */
+        int lineWeight = 1;
         LineItem(Kind k, String t){ this(k,t,false); }
-        LineItem(Kind k, String t, boolean b){ kind=k; text=t==null?"":t; bold=b; }
-        LineItem(byte[] img, String fmt){ kind=Kind.IMAGE; text=""; imageData=img; imageFormat=fmt; }
+        LineItem(Kind k, String t, boolean b){ kind=k; text=t==null?"":t; bold=b;
+            // TITLE 18pt 超 16pt 单倍行距，占 2 逻辑行避免裁切，且与分页计数一致
+            if (k == Kind.TITLE) this.lineWeight = 2;
+        }
+        LineItem(byte[] img, String fmt){
+            kind = Kind.IMAGE; text=""; imageData=img; imageFormat=fmt;
+            float w = 0, h = 0;
+            try (ByteArrayInputStream in = new ByteArrayInputStream(img)) {
+                BufferedImage bi = ImageIO.read(in);
+                if (bi != null) { w = bi.getWidth(); h = bi.getHeight(); }
+            } catch (Exception ignore) {
+                // 尺寸读取失败时退回默认高度，保证不阻断文档生成
+            }
+            if (w > 0 && h > 0) {
+                imageHeightPt = Math.min(IMG_WIDTH_PT * h / w, IMG_MAX_HEIGHT_PT);
+                imageWidthPt = imageHeightPt * w / h;
+            }
+            lineWeight = Math.max(3, (int) Math.ceil(imageHeightPt / LINE_PT));
+        }
     }
 
     private List<LineItem> collectAllLines(ProjectVO project, SoftwareSummaryVO summary) {
+        if (cachedAllLines != null) return cachedAllLines;
         List<LineItem> r = new ArrayList<>();
         String name = project.getName();
         String ver = summary != null && summary.getVersion() != null ? summary.getVersion() : "V1.0";
         String functionMenu = summary != null ? summary.getFunctionMenu() : null;
 
-        // 生成系统截图（登录页、首页、各模块列表/表单页）
-        Map<String, byte[]> screenshots = captureScreenshots(name, functionMenu);
+        // 优先读取用户在编辑器保存的 MANUAL 手册；缺失时回退到本地章节拼接
+        List<String> savedManual = loadSavedManualLines();
+        // 保存的 MANUAL 为纯文本手册，无需截图；否则生成系统截图（登录页、首页、各模块列表/表单页）
+        Map<String, byte[]> screenshots = savedManual != null
+                ? java.util.Collections.<String, byte[]>emptyMap()
+                : captureScreenshots(name, functionMenu);
         // 解析功能菜单：模块 -> 功能列表
         Map<String, List<String>> modules = parseFunctionMenu(functionMenu);
 
-        // 扉页信息（参与30行计数）
-        for (int i=0;i<3;i++) r.add(new LineItem(Kind.BLANK,""));
-        r.add(new LineItem(Kind.TITLE, name + " 操作说明书", true));
-        r.add(new LineItem(Kind.BLANK,""));
-        r.add(new LineItem(Kind.VERSION, "版本：" + ver));
-        r.add(new LineItem(Kind.BLANK,""));
-        r.add(new LineItem(Kind.BODY, "著作权人：" + name));
-        r.add(new LineItem(Kind.BODY, "开发完成日期：-"));
-        for (int i=0;i<2;i++) r.add(new LineItem(Kind.BLANK,""));
-        // 目录占位
-        r.add(new LineItem(Kind.TOC, "目录（Word 中右键更新域以生成）"));
-        r.add(new LineItem(Kind.BLANK,""));
-        String[] ch = new String[]{"第一章 软件概述","第二章 安装与配置","第三章 功能说明","第四章 操作指南","第五章 维护与常见问题"};
-        for (String s : ch) r.add(new LineItem(Kind.BODY, s));
-        for (int i=0;i<2;i++) r.add(new LineItem(Kind.BLANK,""));
-
-        // 正文：优先读用户 MANUAL HTML，否则按 summary 字段拼 5 章
+        // ========== 正文：先构建正文，再由正文标题生成目录，确保目录与正文完全一致 ==========
         List<LineItem> body = new ArrayList<>();
-        for (String s : collectBodyPlain(summary)) {
-            String t = s == null ? "" : s.trim();
-            if (t.isEmpty()) { body.add(new LineItem(Kind.BLANK, "")); continue; }
-            if (t.matches("^第.+[章节].*")) body.add(new LineItem(Kind.H1, t, true));
-            else if (t.matches("^\\d+(\\.\\d+)*\\s+.+") || t.matches("^\\d+[、.．]\\s*.+")) body.add(new LineItem(Kind.H2, t, true));
-            else body.add(new LineItem(Kind.BODY, t));
-        }
-        r.addAll(body);
+        if (savedManual != null) {
+            // 用户保存的手册：按原样分类（第X章→H1、X.Y→H2），目录由这些标题派生
+            appendChapterLines(body, savedManual, null, null);
+        } else {
+        // 第一章 软件介绍（来自 ch1，内容丰富）
+        List<String> ch1Lines = new ArrayList<>();
+        ch1(ch1Lines, summary);
+        // 优先用 AI 生成的 systemOverview 替换 1.1 内容
+        String aiOverview = (summary != null && summary.getSystemOverview() != null
+                && !summary.getSystemOverview().trim().isEmpty())
+                ? summary.getSystemOverview() : null;
+        appendChapterLines(body, ch1Lines, aiOverview, "1.1");
 
-        // 在"1.4 系统架构"段落后插入架构图
-        byte[] archImg = generateArchitectureDiagram();
-        if (archImg != null) {
-            int insertIdx = -1;
-            for (int i = 0; i < r.size(); i++) {
-                if (r.get(i).text.contains("1.4 系统架构")) { insertIdx = i; break; }
-            }
-            if (insertIdx >= 0) {
-                int endIdx = r.size();
-                for (int i = insertIdx + 1; i < r.size(); i++) {
-                    Kind k = r.get(i).kind;
-                    if (k == Kind.H1 || k == Kind.H2) { endIdx = i; break; }
+        // 第二章 运行环境与安装（来自 ch2）
+        List<String> ch2Lines = new ArrayList<>();
+        ch2(ch2Lines, summary);
+        appendChapterLines(body, ch2Lines, null, null);
+
+        // 第二章截图：Windows 系统配置截图（图号按实际嵌入顺序连续递增）
+        int fig2 = 0;
+        byte[] ipConfigShot = screenshots.get("win_ipconfig");
+        if (ipConfigShot != null) {
+            body.add(new LineItem(Kind.BODY, "配置服务器 IP 地址：打开网络适配器属性，选择 Internet 协议版本 4 (TCP/IPv4)，" +
+                    "设置静态 IP 地址、子网掩码、默认网关和 DNS 服务器。"));
+            body.add(new LineItem(ipConfigShot, "png"));
+            body.add(new LineItem(Kind.FIGURE_CAPTION, "图2-" + (++fig2) + " 服务器 IP 地址配置", false));
+        }
+        byte[] explorerShot = screenshots.get("win_explorer");
+        if (explorerShot != null) {
+            body.add(new LineItem(Kind.BODY, "部署文件目录结构：将系统部署包解压至服务器指定目录，" +
+                    "目录中包含后端服务、前端静态资源、Docker 配置等文件。"));
+            body.add(new LineItem(explorerShot, "png"));
+            body.add(new LineItem(Kind.FIGURE_CAPTION, "图2-" + (++fig2) + " 部署文件目录结构", false));
+        }
+        byte[] serviceShot = screenshots.get("win_service");
+        if (serviceShot != null) {
+            body.add(new LineItem(Kind.BODY, "服务启动状态：打开 Windows 服务管理器，确认 MySQL、Redis、MinIO 和" +
+                    "应用服务均已正常启动。"));
+            body.add(new LineItem(serviceShot, "png"));
+            body.add(new LineItem(Kind.FIGURE_CAPTION, "图2-" + (++fig2) + " Windows 服务管理器", false));
+        }
+
+        // ========== 第三章 功能介绍（截图驱动 + AI 描述） ==========
+        body.add(new LineItem(Kind.H1, CH3, true));
+
+        // 解析 AI 生成的主要功能，提取各模块描述
+        Map<String, String> moduleDescs = parseModuleDescriptions(
+                summary != null ? summary.getMainFunctions() : null, modules);
+        log.info("result ai module desc : {}", moduleDescs);
+        // 图号计数器：按实际嵌入顺序递增，避免缺图导致跳号
+        int fig3 = 0;
+
+        // 3.1 登录 + 登录截图
+        body.add(new LineItem(Kind.H2, S3_1, true));
+        body.add(new LineItem(Kind.BODY, "打开浏览器，在地址栏输入系统访问地址，进入系统登录页面。" +
+                "在登录页面输入用户名和密码，点击 登录 按钮即可进入系统。首次登录系统会强制要求" +
+                "修改初始密码，请按提示设置新密码，密码修改成功后使用新密码重新登录即可。"));
+        byte[] loginShot = screenshots.get("login");
+        if (loginShot != null) {
+            body.add(new LineItem(loginShot, "png"));
+            body.add(new LineItem(Kind.FIGURE_CAPTION, "图3-" + (++fig3) + " 系统登录页面", false));
+        }
+
+        // 3.2 首页/工作台截图
+        body.add(new LineItem(Kind.H2, S3_2, true));
+        body.add(new LineItem(Kind.BODY, "登录成功后进入系统工作台首页。首页以可视化方式展示关键业务指标，" +
+                "包括今日记录数、本月记录数、异常告警数、在线用户数等统计卡片；同时以卡片形式展示各" +
+                "功能模块入口，点击可快速进入对应模块；页面下方展示最近操作记录，便于了解系统运行状态。"));
+        byte[] homeShot = screenshots.get("home");
+        if (homeShot != null) {
+            body.add(new LineItem(homeShot, "png"));
+            body.add(new LineItem(Kind.FIGURE_CAPTION, "图3-" + (++fig3) + " 系统工作台首页", false));
+        }
+
+        // 架构图
+        byte[] archShot = screenshots.get("arch");
+        if (archShot != null) {
+            body.add(new LineItem(Kind.BODY, "系统采用分层架构设计，整体架构如下图所示："));
+            body.add(new LineItem(archShot, "png"));
+            body.add(new LineItem(Kind.FIGURE_CAPTION, "图3-" + (++fig3) + " 系统架构图", false));
+        }
+
+        // 各业务模块：标题 + AI描述 + 功能列表 + 6张截图
+        int modIdx = 1;
+        for (Map.Entry<String, List<String>> e : modules.entrySet()) {
+            String moduleName = e.getKey();
+            List<String> funcs = e.getValue();
+            String sectionNo = String.format("3.%d", modIdx + 2);
+
+            body.add(new LineItem(Kind.H2, sectionNo + " " + moduleName, true));
+
+            // 模块描述：仅用 AI 生成的内容，未生成则标注原因
+            String aiDesc = moduleDescs.get(moduleName);
+            if (aiDesc != null && !aiDesc.trim().isEmpty()) {
+                for (String line : aiDesc.split("\\r?\\n")) {
+                    String t = line.trim();
+                    if (!t.isEmpty()) body.add(new LineItem(Kind.BODY, t));
                 }
-                r.add(endIdx, new LineItem(archImg, "png"));
-                r.add(endIdx + 1, new LineItem(Kind.BODY, "图1-1 系统架构图", false));
+            } else {
+                body.add(new LineItem(Kind.BODY, "【" + moduleName + "模块描述 - AI未生成。原因：AI输出中未匹配到此模块的描述，可能是模块名不匹配或AI输出格式异常。】"));
             }
+
+            // 功能点列表：直接列功能菜单中的功能名，不编造描述
+            if (funcs != null && !funcs.isEmpty()) {
+                body.add(new LineItem(Kind.BODY, moduleName + "模块包含以下功能点："));
+                int n = 1;
+                for (String f : funcs) {
+                    body.add(new LineItem(Kind.BODY, "（" + cnNum(n) + "）" + f));
+                    n++;
+                }
+            }
+
+            // 截图1：列表页（有数据）
+            byte[] listShot = screenshots.get("list_" + modIdx);
+            if (listShot != null) {
+                body.add(new LineItem(Kind.BODY, "进入" + moduleName + "模块后，系统展示数据列表页面，" +
+                        "已录入的数据以表格形式展示，支持按关键字段进行查询筛选。"));
+                body.add(new LineItem(listShot, "png"));
+                body.add(new LineItem(Kind.FIGURE_CAPTION,
+                        String.format("图3-%d %s列表页面", ++fig3, moduleName), false));
+            }
+
+            // 截图2：列表页（空数据）
+            byte[] listEmptyShot = screenshots.get("list_empty_" + modIdx);
+            if (listEmptyShot != null) {
+                body.add(new LineItem(Kind.BODY, "当模块中暂无数据时，列表页面显示暂无数据提示。"));
+                body.add(new LineItem(listEmptyShot, "png"));
+                body.add(new LineItem(Kind.FIGURE_CAPTION,
+                        String.format("图3-%d %s列表页面（空数据状态）", ++fig3, moduleName), false));
+            }
+
+            // 截图3：列表页（搜索筛选）
+            byte[] listSearchShot = screenshots.get("list_search_" + modIdx);
+            if (listSearchShot != null) {
+                body.add(new LineItem(Kind.BODY, "在搜索框中输入关键字并点击 搜索 按钮，系统筛选出符合条件的数据。"));
+                body.add(new LineItem(listSearchShot, "png"));
+                body.add(new LineItem(Kind.FIGURE_CAPTION,
+                        String.format("图3-%d %s列表页面（搜索筛选）", ++fig3, moduleName), false));
+            }
+
+            // 截图4：新增表单（空）
+            byte[] formShot = screenshots.get("form_" + modIdx);
+            if (formShot != null) {
+                body.add(new LineItem(Kind.BODY, "点击列表页面的 新增 按钮（红色标注处），打开信息录入表单。" +
+                        "在表单中填写各项业务信息，带 * 号的为必填项。"));
+                body.add(new LineItem(formShot, "png"));
+                body.add(new LineItem(Kind.FIGURE_CAPTION,
+                        String.format("图3-%d %s新增录入页面", ++fig3, moduleName), false));
+            }
+
+            // 截图5：表单（已填写）
+            byte[] formFilledShot = screenshots.get("form_filled_" + modIdx);
+            if (formFilledShot != null) {
+                body.add(new LineItem(Kind.BODY, "填写完成各项信息后，点击 保存 按钮（红色标注处）提交数据，" +
+                        "系统校验通过后保存成功并返回列表页面。"));
+                body.add(new LineItem(formFilledShot, "png"));
+                body.add(new LineItem(Kind.FIGURE_CAPTION,
+                        String.format("图3-%d %s录入页面（已填写）", ++fig3, moduleName), false));
+            }
+
+            // 截图6：详情页
+            byte[] detailShot = screenshots.get("detail_" + modIdx);
+            if (detailShot != null) {
+                body.add(new LineItem(Kind.BODY, "在列表页面点击某条记录可进入详情页面，查看该记录的完整信息。"));
+                body.add(new LineItem(detailShot, "png"));
+                body.add(new LineItem(Kind.FIGURE_CAPTION,
+                        String.format("图3-%d %s详情页面", ++fig3, moduleName), false));
+            }
+
+            modIdx++;
         }
 
-        // 在操作指南章节插入系统截图
-        insertOperationScreenshots(r, modules, screenshots);
+        // ========== 第四章 操作指南（来自 ch4，含登录/首页/模块操作截图） ==========
+        ch4(body, summary, modules, screenshots);
 
-        // 不到 1 页（30行）补齐空行，保证第一页也不会只有少量内容
-        while (r.size() < LPP) r.add(new LineItem(Kind.BLANK, ""));
+        // ========== 第五章 维护与常见问题（来自 ch5） ==========
+        List<String> ch5Lines = new ArrayList<>();
+        ch5(ch5Lines, summary);
+        appendChapterLines(body, ch5Lines, null, null);
+        }
+
+        // 图片不跨页：本页剩余空间不足时用空行补齐到页末，保证 DOCX/PDF 分页一致
+        avoidImageSplit(body);
+
+        // ========== 扉页 ==========
+        for (int i=0;i<3;i++) r.add(new LineItem(Kind.BLANK,""));
+        r.add(new LineItem(Kind.TITLE, name + " 说明书", true));
+        r.add(new LineItem(Kind.VERSION, "版本：" + ver));
+        for (int i=0;i<4;i++) r.add(new LineItem(Kind.BLANK,""));
+        padToPage(r);
+
+        // ========== 目录：由正文的章/节标题自动生成，页码按最终分页计算 ==========
+        r.add(new LineItem(Kind.H1, "目  录", true));
+        List<LineItem> tocEntries = new ArrayList<>();
+        List<LineItem> headings = new ArrayList<>();
+        for (LineItem it : body) {
+            boolean isChapter = it.kind == Kind.H1;
+            boolean isSection = it.kind == Kind.H2 && it.text.matches("^\\d+\\.\\d+\\s.*");
+            if (isChapter || isSection) {
+                LineItem toc = new LineItem(Kind.TOC, "");
+                tocEntries.add(toc);
+                headings.add(it);
+                r.add(toc);
+            }
+        }
+        padToPage(r);
+        // 正文起始页 = 扉页与目录占用的页数 + 1
+        int bodyStartPage = totalWeight(r) / LPP + 1;
+        int acc = 0;
+        int hi = 0;
+        for (LineItem it : body) {
+            if (hi < headings.size() && it == headings.get(hi)) {
+                String label = it.kind == Kind.H1 ? it.text : "　　" + it.text;
+                tocEntries.get(hi).text = tocLine(label, bodyStartPage + acc / LPP);
+                hi++;
+            }
+            acc += it.lineWeight;
+        }
+
+        r.addAll(body);
+        cachedAllLines = r;
         return r;
     }
 
-    /** 解析功能菜单：每行 "功能名：模块名" */
+    /** 用空行把列表补齐到 30 逻辑行的整数倍（按 lineWeight 计算，图片与标题按权重折算） */
+    private static void padToPage(List<LineItem> list) {
+        int weight = totalWeight(list);
+        while (weight % LPP != 0) {
+            list.add(new LineItem(Kind.BLANK, ""));
+            weight++;
+        }
+    }
+
+    /** 列表占用的逻辑行总数 */
+    private static int totalWeight(List<LineItem> list) {
+        int weight = 0;
+        for (LineItem it : list) weight += it.lineWeight;
+        return weight;
+    }
+
+    /** 图片不跨页：本页剩余逻辑行不足以容纳图片时，用空行补齐到页末 */
+    private static void avoidImageSplit(List<LineItem> list) {
+        int weight = 0;
+        for (int i = 0; i < list.size(); i++) {
+            LineItem it = list.get(i);
+            if (it.kind == Kind.IMAGE) {
+                int remain = LPP - (weight % LPP);
+                if (remain < it.lineWeight) {
+                    for (int k = 0; k < remain; k++) {
+                        list.add(i, new LineItem(Kind.BLANK, ""));
+                        i++;
+                    }
+                    weight += remain;
+                }
+            }
+            weight += it.lineWeight;
+        }
+    }
+
+    /** 目录条目：标题 + 点线引导 + 页码 */
+    private static String tocLine(String label, int page) {
+        int width = 0;
+        for (char c : label.toCharArray()) width += (c > 0x2E80) ? 2 : 1;
+        int dots = Math.max(3, 62 - width - String.valueOf(page).length());
+        return label + " " + ".".repeat(dots) + " " + page;
+    }
+
+    /** 按候选顺序加载中文字体，全部不可用时抛出明确异常，避免生成损坏的 PDF */
+    private static BaseFont loadCjkFont(String... candidates) {
+        String winDir = System.getenv().getOrDefault("WINDIR", "C:\\Windows");
+        for (String c : candidates) {
+            File f = new File(winDir + "\\Fonts\\" + c);
+            if (f.exists()) {
+                try {
+                    return BaseFont.createFont(f.getAbsolutePath(), BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+                } catch (Exception e) {
+                    log.warn("加载字体失败: {}", f.getAbsolutePath(), e);
+                }
+            }
+        }
+        try {
+            // 退到 iText 内置 CJK 字体（无需系统字体文件，需 itext-asian）
+            return BaseFont.createFont("STSong-Light", "UniGB-UCS2-H", BaseFont.NOT_EMBEDDED);
+        } catch (Exception e) {
+            throw new IllegalStateException("未找到可用中文字体，请安装宋体/微软雅黑后重试", e);
+        }
+    }
+
+    /**
+     * 将章节文本行转换为 LineItem 并追加到结果中。
+     * 行分类规则：
+     *   - 以"第X章"开头 → H1
+     *   - 匹配 "X.Y" 或 "X.Y.Z" 开头 → H2
+     *   - 其余 → BODY
+     * 若 aiReplaceSection 不为空，则该小节的内容用 aiContent 替换。
+     */
+    private void appendChapterLines(List<LineItem> r, List<String> lines,
+                                    String aiContent, String aiReplaceSection) {
+        boolean inAiSection = false;
+        boolean aiWritten = false;
+        for (String raw : lines) {
+            if (raw == null) continue;
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+
+            // 判断是否是章节标题
+            boolean isChapter = line.matches("^第[一二三四五六七八九十]+章.*");
+            boolean isSection = line.matches("^\\d+\\.\\d+(\\.\\d+)?\\s.*");
+            String sectionNo = isSection ? line.split("\\s")[0] : null;
+
+            // 处理 AI 内容替换：遇到目标小节标题时，用 AI 内容替换后续正文直到下一个标题
+            if (aiReplaceSection != null && aiContent != null && sectionNo != null
+                    && sectionNo.startsWith(aiReplaceSection)) {
+                inAiSection = true;
+                aiWritten = false;
+            } else if (isSection || isChapter) {
+                inAiSection = false;
+            }
+
+            if (inAiSection && !aiWritten) {
+                // 先写标题
+                if (isChapter) r.add(new LineItem(Kind.H1, line, true));
+                else if (isSection) r.add(new LineItem(Kind.H2, line, true));
+                // 再写 AI 内容
+                for (String al : aiContent.split("\\r?\\n")) {
+                    String t = al.trim();
+                    if (!t.isEmpty()) r.add(new LineItem(Kind.BODY, t));
+                }
+                aiWritten = true;
+                continue;
+            }
+            if (inAiSection && aiWritten) continue; // 跳过被替换的原文
+
+            if (isChapter) {
+                r.add(new LineItem(Kind.H1, line, true));
+            } else if (isSection) {
+                r.add(new LineItem(Kind.H2, line, true));
+            } else {
+                r.add(new LineItem(Kind.BODY, line));
+            }
+        }
+    }
+
+    /**
+     * 从 AI 生成的"主要功能"文本中提取各模块描述。
+     * mainFunctions 格式通常为 "1. 模块名：描述...2. 模块名：描述..."
+     * 按功能菜单中的模块名做模糊匹配，返回 模块名 -> 描述 的映射。
+     */
+    private static Map<String, String> parseModuleDescriptions(String mainFunctions, Map<String, List<String>> modules) {
+        Map<String, String> result = new java.util.HashMap<>();
+        if (mainFunctions == null || mainFunctions.trim().isEmpty() || modules.isEmpty()) {
+            log.warn("parseModuleDescriptions: mainFunctions empty or modules empty, skip");
+            return result;
+        }
+
+        // 打印 AI 输出前 800 字，便于排查格式问题
+        String preview = mainFunctions.length() > 800 ? mainFunctions.substring(0, 800) : mainFunctions;
+        log.info("parseModuleDescriptions: AI 输出预览=\n{}", preview);
+
+        // 策略一：优先用功能菜单中的模块名直接定位，截取模块之间的文本
+        // （AI 常输出 "数据核验审批模块负责...；在数字化标准配置环节..." 这类连贯段落或"在{模块名}环节"句式）
+        result = parseByModuleName(mainFunctions, modules);
+
+        // 策略二：模块名定位不足时，用 "1. 模块名：" 等序号格式补充
+        if (result.size() < modules.size()) {
+            Map<String, String> byName = parseByNumberedFormat(mainFunctions, modules);
+            for (Map.Entry<String, String> e : byName.entrySet()) {
+                result.putIfAbsent(e.getKey(), e.getValue());
+            }
+        }
+
+        log.info("parseModuleDescriptions: matched {}/{} modules", result.size(), modules.size());
+        return result;
+    }
+
+    /** 策略一：按 "1. 模块名：" 等序号格式切分 */
+    private static Map<String, String> parseByNumberedFormat(String text, Map<String, List<String>> modules) {
+        Map<String, String> result = new java.util.HashMap<>();
+        java.util.regex.Pattern[] patterns = new java.util.regex.Pattern[]{
+                java.util.regex.Pattern.compile("(?:^|\\n)\\s*#{0,6}\\s*(\\d+)[、.．]\\s*\\*?\\*?([^：:\\n*#]{2,30})\\*?\\*?\\s*[：:]", java.util.regex.Pattern.MULTILINE),
+                java.util.regex.Pattern.compile("(?:^|\\n)\\s*#{0,6}\\s*\\*?\\*?(\\d+)[、.．]\\s*([^：:\\n*#]{2,30})\\*?\\*?\\s*[：:]", java.util.regex.Pattern.MULTILINE),
+                java.util.regex.Pattern.compile("(?:^|\\n)\\s*#{1,6}\\s+\\*?\\*?([^：:\\n*#]{2,30})\\*?\\*?", java.util.regex.Pattern.MULTILINE),
+                java.util.regex.Pattern.compile("(?:^|\\n)\\s*\\*?\\*?([^：:\\n*#]{2,30})\\*?\\*?\\s*[：:]", java.util.regex.Pattern.MULTILINE)
+        };
+
+        java.util.List<int[]> spans = new java.util.ArrayList<>();
+        java.util.List<String> names = new java.util.ArrayList<>();
+
+        for (java.util.regex.Pattern p : patterns) {
+            java.util.regex.Matcher m = p.matcher(text);
+            java.util.List<int[]> trySpans = new java.util.ArrayList<>();
+            java.util.List<String> tryNames = new java.util.ArrayList<>();
+            while (m.find()) {
+                String name = m.group(m.groupCount()).trim();
+                if (name.length() < 2 || name.length() > 20) continue;
+                if (name.startsWith("各") || name.startsWith("综") || name.startsWith("总") || name.startsWith("以")
+                        || name.contains("衔接") || name.contains("关系") || name.contains("说明")
+                        || name.contains("如下") || name.contains("功能") || name.contains("模块")
+                        || name.contains("主要") || name.contains("系统")) continue;
+                trySpans.add(new int[]{m.start(), m.end()});
+                tryNames.add(name);
+            }
+            if (tryNames.size() >= 2) {
+                spans = trySpans;
+                names = tryNames;
+                break;
+            }
+            if (names.isEmpty() && !tryNames.isEmpty()) {
+                spans = trySpans;
+                names = tryNames;
+            }
+        }
+
+        log.info("parseModuleDescriptions[策略一]: parsed {} sections", names.size());
+
+        for (int i = 0; i < names.size(); i++) {
+            int start = spans.get(i)[1];
+            int end = (i + 1 < spans.size()) ? spans.get(i + 1)[0] : text.length();
+            String desc = text.substring(start, end).trim();
+            desc = desc.replaceAll("^\\s*\\d+[、.．]\\s*", "");
+            desc = stripSummary(desc);
+            if (!desc.isEmpty()) {
+                String matched = matchModuleName(names.get(i), modules);
+                if (matched != null) {
+                    result.putIfAbsent(matched, desc);
+                    log.info("parseModuleDescriptions[策略一]: AI[{}] -> 模块[{}]", names.get(i), matched);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 策略一：用已知模块名直接在文本中定位，截取模块到下一个模块之间的文本作为描述。
+     * 支持的句式（与 generateMainFunctions 提示词句式对齐）：
+     *   - "模块名模块负责/支持/用于..."
+     *   - "在模块名环节输出..."
+     *   - "在模块名中落实..."
+     *   - "模块名支持..."（模块名后直接跟动词）
+     */
+    private static Map<String, String> parseByModuleName(String text, Map<String, List<String>> modules) {
+        Map<String, String> result = new java.util.HashMap<>();
+        java.util.List<String> moduleNames = new java.util.ArrayList<>(modules.keySet());
+        // 长模块名优先匹配，避免短模块名命中长模块名的片段
+        moduleNames.sort((a, b) -> Integer.compare(b.length(), a.length()));
+
+        // 每个模块只保留第一次被“定义”的位置：模块名 -> {起始位置, 名称长度, 描述偏移}
+        java.util.Map<String, int[]> firstPositions = new java.util.LinkedHashMap<>();
+        java.util.List<int[]> occupied = new java.util.ArrayList<>();
+
+        for (String modName : moduleNames) {
+            int idx = 0;
+            while ((idx = text.indexOf(modName, idx)) >= 0) {
+                int end = idx + modName.length();
+                // 已被更长的模块名占用则跳过，避免重复切分
+                if (overlaps(occupied, idx, end)) {
+                    idx = end;
+                    continue;
+                }
+                String marker = text.substring(end, Math.min(end + 2, text.length()));
+                int descOffset = -1;
+                if (marker.startsWith("模块") || marker.startsWith("环节")
+                        || marker.startsWith("功能") || marker.startsWith("子系统")) {
+                    descOffset = 2;
+                } else if (marker.startsWith("中") || marker.startsWith("里")) {
+                    descOffset = 1;
+                } else if (marker.startsWith("负责") || marker.startsWith("支持") || marker.startsWith("用于")
+                        || marker.startsWith("提供") || marker.startsWith("实现") || marker.startsWith("包含")
+                        || marker.startsWith("承担") || marker.startsWith("开展")) {
+                    descOffset = 0;
+                }
+                if (descOffset >= 0) {
+                    firstPositions.putIfAbsent(modName, new int[]{idx, modName.length(), descOffset});
+                    occupied.add(new int[]{idx, end});
+                    break;
+                }
+                idx = end;
+            }
+        }
+
+        // 按文本位置排序后，逐段截取"模块名 -> 下一个模块名"之间的文本
+        java.util.List<java.util.Map.Entry<String, int[]>> positions =
+                new java.util.ArrayList<>(firstPositions.entrySet());
+        positions.sort((a, b) -> Integer.compare(a.getValue()[0], b.getValue()[0]));
+
+        log.info("parseModuleDescriptions[策略一]: 找到 {} 个模块位置", positions.size());
+
+        for (int i = 0; i < positions.size(); i++) {
+            String modName = positions.get(i).getKey();
+            int start = positions.get(i).getValue()[0];
+            int descStart = start + positions.get(i).getValue()[1] + positions.get(i).getValue()[2];
+            int descEnd = (i + 1 < positions.size()) ? positions.get(i + 1).getValue()[0] : text.length();
+            String desc = text.substring(descStart, descEnd).trim();
+
+            // 去掉开头的标点与动词（"在X环节，登记..." 截取后残留的逗号在此清理）
+            desc = desc.replaceAll("^[，,、；;：:。.\\s]+", "");
+            desc = desc.replaceAll("^(负责|支持|用于|提供|实现|包含|主要|核心|承担|开展|落实|完成|组织|进行|的)\\s*", "");
+            // 去掉尾部的总结段落
+            desc = stripSummary(desc);
+            // 去掉结尾的分号/句号，以及下一模块前残留的"在"
+            desc = desc.replaceAll("[；;。.，,\\s]+$", "").trim();
+            desc = desc.replaceAll("在$", "").trim();
+            desc = desc.replaceAll("[；;。.，,\\s]+$", "").trim();
+
+            if (!desc.isEmpty()) {
+                String matched = matchModuleName(modName, modules);
+                if (matched != null) {
+                    result.putIfAbsent(matched, desc);
+                    log.info("parseModuleDescriptions[策略一]: 模块[{}] 描述长度={}", matched, desc.length());
+                }
+            }
+        }
+        return result;
+    }
+
+    /** 区间是否与已占用区间重叠 */
+    private static boolean overlaps(java.util.List<int[]> ranges, int start, int end) {
+        for (int[] r : ranges) {
+            if (start < r[1] && end > r[0]) return true;
+        }
+        return false;
+    }
+
+    /** 去掉描述尾部的总结段落 */
+    private static String stripSummary(String desc) {
+        int summaryIdx = -1;
+        String[] summaryPrefixes = {"各模块", "综上", "总之", "整体来看", "系统通过", "以上模块", "各功能", "系统在"};
+        for (String prefix : summaryPrefixes) {
+            int idx = desc.indexOf(prefix);
+            if (idx > 20) {
+                if (summaryIdx < 0 || idx < summaryIdx) summaryIdx = idx;
+            }
+        }
+        if (summaryIdx > 0) desc = desc.substring(0, summaryIdx).trim();
+        return desc;
+    }
+
+    /**
+     * 将 AI 输出的模块名匹配到功能菜单中的模块名。
+     * 匹配优先级：精确匹配 > 包含关系 > 公共字符比例(≥40%)
+     */
+    private static String matchModuleName(String aiName, Map<String, List<String>> modules) {
+        if (aiName == null || aiName.isEmpty()) return null;
+        String bestMatch = null;
+        int bestScore = 0;
+        for (String modName : modules.keySet()) {
+            int score;
+            if (aiName.equals(modName)) {
+                return modName; // 精确匹配直接返回
+            } else if (aiName.contains(modName) || modName.contains(aiName)) {
+                score = 80 + Math.min(aiName.length(), modName.length());
+            } else {
+                int common = commonCharCount(aiName, modName);
+                int minLen = Math.min(aiName.length(), modName.length());
+                score = (minLen > 0) ? common * 100 / minLen : 0;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = modName;
+            }
+        }
+        // 降低阈值到 40%，提高匹配率
+        return (bestMatch != null && bestScore >= 40) ? bestMatch : null;
+    }
+
+    /** 两个字符串的公共字符数（用于模糊匹配模块名） */
+    private static int commonCharCount(String a, String b) {
+        if (a == null || b == null) return 0;
+        int count = 0;
+        for (char c : a.toCharArray()) {
+            if (b.indexOf(c) >= 0) count++;
+        }
+        return count;
+    }
+
+    /**
+     * 解析功能菜单。支持的每行格式：
+     *   1) "子菜单（一级菜单）"——标准格式，全角括号；一级菜单即分组键
+     *   2) "子菜单(一级菜单)"——半角括号兼容
+     *   3) "功能名：模块名" / "模块名/功能名"——旧格式兼容
+     */
     private Map<String, List<String>> parseFunctionMenu(String functionMenu) {
         Map<String, List<String>> modules = new LinkedHashMap<>();
         if (functionMenu == null || functionMenu.trim().isEmpty()) return modules;
         for (String raw : functionMenu.split("\\r?\\n")) {
             String line = raw.trim();
             if (line.isEmpty()) continue;
-            String[] parts = line.split("[:：/\\\\]", 2);
-            String func, module;
-            if (parts.length == 2) { func = parts[0].trim(); module = parts[1].trim(); }
-            else { func = line; module = "系统功能"; }
-            if (func.isEmpty()) continue;
+            String func = null, module = null;
+            // 1) 优先识别括号格式 子菜单（一级菜单）
+            int fs = line.indexOf('（'), fe = line.indexOf('）');
+            int hs = line.indexOf('('),  he = line.indexOf(')');
+            if (fs > 0 && fe > fs) {
+                func = line.substring(0, fs).trim();
+                module = line.substring(fs + 1, fe).trim();
+            } else if (hs > 0 && he > hs) {
+                func = line.substring(0, hs).trim();
+                module = line.substring(hs + 1, he).trim();
+            }
+            // 2) 回退到冒号/斜杠分隔
+            if (func == null || func.isEmpty()) {
+                String[] parts = line.split("[:：/\\\\]", 2);
+                if (parts.length == 2) {
+                    func = parts[0].trim();
+                    module = parts[1].trim();
+                } else {
+                    func = line;
+                    module = null;
+                }
+            }
+            if (func == null || func.isEmpty()) continue;
+            if (module == null || module.isEmpty()) module = "系统功能";
             modules.computeIfAbsent(module, k -> new ArrayList<>()).add(func);
         }
         return modules;
@@ -277,155 +916,85 @@ public class ManualDocGenerator implements DocumentGenerator {
 
     /** 调用浏览器生成系统截图，返回 标识 -> PNG字节 */
     private Map<String, byte[]> captureScreenshots(String softwareName, String functionMenu) {
+        // 命中缓存直接复用，避免每次导出都重新截图
+        String cacheKey = projectId + "|" + softwareName + "|"
+                + (functionMenu == null ? "" : functionMenu.hashCode());
+        Map<String, byte[]> cached = SHOT_CACHE.get(cacheKey);
+        if (cached != null && !cached.isEmpty()) {
+            log.info("截图命中缓存：{} 张", cached.size());
+            return new LinkedHashMap<>(cached);
+        }
+
         Map<String, byte[]> result = new LinkedHashMap<>();
+        // 用 UUID 确保每次调用目录唯一，避免并发任务互相删除文件
+        File workDir = new File(System.getProperty("java.io.tmpdir"),
+                "ruanzhu_shots_" + projectId + "_" + java.util.UUID.randomUUID());
         try {
-            File workDir = new File(System.getProperty("java.io.tmpdir"), "ruanzhu_shots_" + projectId);
+            // 优先用浏览器截图
             SystemScreenshotService svc = new SystemScreenshotService(softwareName, functionMenu, workDir);
             Map<String, File> files = svc.captureAll();
+
+            // AWT 绘制兜底：按标识合并补齐浏览器未生成的页面，保证每模块 6 张截图
+            AwtScreenshotService awt = new AwtScreenshotService(softwareName, functionMenu, workDir);
+            Map<String, File> awtFiles = awt.captureAll();
+            for (Map.Entry<String, File> e : awtFiles.entrySet()) {
+                if (e.getValue() != null && e.getValue().exists()) {
+                    files.putIfAbsent(e.getKey(), e.getValue());
+                }
+            }
+            log.info("截图合并完成：浏览器/兜底共 {} 张", files.size());
+
+            // 先把所有图片读进内存，再清理目录（避免边读边删）
             for (Map.Entry<String, File> e : files.entrySet()) {
                 result.put(e.getKey(), Files.readAllBytes(e.getValue().toPath()));
             }
-            // 截图嵌入后清理临时目录
-            svc.cleanup();
+            log.info("截图生成完成，共 {} 张", result.size());
         } catch (Exception e) {
             log.warn("生成系统截图失败，将跳过截图嵌入", e);
+        } finally {
+            // 无论成功失败都清理临时目录
+            try {
+                deleteRecursively(workDir);
+            } catch (Exception ignored) {}
         }
+        if (!result.isEmpty()) SHOT_CACHE.put(cacheKey, result);
         return result;
     }
 
-    /** 在操作指南章节插入系统截图 */
-    private void insertOperationScreenshots(List<LineItem> r, Map<String, List<String>> modules, Map<String, byte[]> shots) {
-        if (shots.isEmpty()) return;
-        // 1) 登录截图：找到"4.1 登录系统"段落后插入
-        insertImageAfterHeading(r, "4.1 登录系统", shots.get("login"), "图4-1 系统登录页面");
-        // 2) 首页截图：找到登录截图后或"4.2"前插入
-        insertImageAfterHeading(r, "工作台", shots.get("home"), "图4-2 系统首页（工作台）");
-        // 3) 各模块截图：按顺序插入到对应操作步骤后
-        int modIdx = 1;
-        for (Map.Entry<String, List<String>> e : modules.entrySet()) {
-            String key = "list_" + modIdx;
-            String fkey = "form_" + modIdx;
-            String figNo = String.format("图4-%d", modIdx + 2);
-            String figNo2 = String.format("图4-%d", modIdx + 2 + modules.size());
-            // 找到该模块对应的 H2 标题（如 "4.2 来料质检登记"）后插入列表页截图
-            // 这里用模块名模糊匹配
-            String heading = findHeadingByModule(r, e.getKey());
-            if (heading != null) {
-                insertImageAfterHeading(r, heading, shots.get(key), figNo + " " + e.getKey() + "列表页面");
-                insertImageAfterHeading(r, heading, shots.get(fkey), figNo2 + " " + e.getKey() + "录入页面");
-            }
-            modIdx++;
-        }
-    }
-
-    /** 在正文中查找包含模块名的 H2 标题文本 */
-    private String findHeadingByModule(List<LineItem> r, String module) {
-        for (LineItem it : r) {
-            if (it.kind == Kind.H2 && it.text.contains(module)) return it.text;
-        }
-        return null;
-    }
-
-    /** 在指定标题段落后插入图片+图注 */
-    private void insertImageAfterHeading(List<LineItem> r, String headingText, byte[] img, String caption) {
-        if (img == null) return;
-        int idx = -1;
-        for (int i = 0; i < r.size(); i++) {
-            if (r.get(i).kind == Kind.H2 && r.get(i).text.contains(headingText)) { idx = i; break; }
-        }
-        if (idx < 0) {
-            // H2 没找到，试试 BODY
-            for (int i = 0; i < r.size(); i++) {
-                if (r.get(i).text.contains(headingText)) { idx = i; break; }
+    private static void deleteRecursively(File f) throws java.io.IOException {
+        if (f.isDirectory()) {
+            File[] children = f.listFiles();
+            if (children != null) {
+                for (File c : children) deleteRecursively(c);
             }
         }
-        if (idx < 0) return;
-        // 找到该段落下一个 H1/H2 的位置
-        int endIdx = r.size();
-        for (int i = idx + 1; i < r.size(); i++) {
-            Kind k = r.get(i).kind;
-            if (k == Kind.H1 || k == Kind.H2) { endIdx = i; break; }
-        }
-        r.add(endIdx, new LineItem(img, "png"));
-        r.add(endIdx + 1, new LineItem(Kind.BODY, caption, false));
+        java.nio.file.Files.deleteIfExists(f.toPath());
     }
 
-    /** 内容不足 1800 行时循环拼接，保证前后 30 页都有内容 */
+    /** 内容不足时用空行补齐，绝不循环复制正文导致内容重复 */
     private static List<LineItem> ensureAtLeast(List<LineItem> src, int minLen) {
         if (src.size() >= minLen) return src;
-        List<LineItem> out = new ArrayList<>(minLen);
-        while (out.size() < minLen) out.addAll(src);
-        return out;
-    }
-
-    private List<String> collectBodyPlain(SoftwareSummaryVO summary) {
-        List<FileRecord> saved = fileRecordRepository.findByProjectIdAndFileType(projectId, "MANUAL");
-        if (!saved.isEmpty()) {
-            FileRecord latest = saved.stream()
-                    .max(Comparator.comparingInt(r -> r.getVersion() != null ? r.getVersion() : 0))
-                    .get();
-            byte[] data = storageClient.download(latest.getStoragePath());
-            String html = new String(data, StandardCharsets.UTF_8);
-            List<String> lines = htmlToPlainLines(html);
-            log.info("说明文档：用保存的 MANUAL name={}, size={}B, lines={}",
-                    latest.getFileName(), data.length, lines.size());
-            return lines;
-        }
-        // 无保存 MANUAL 时，按 summary 字段 + 功能菜单动态拼接 5 章
-        Map<String, List<String>> modules = parseFunctionMenu(summary != null ? summary.getFunctionMenu() : null);
-        List<String> out = new ArrayList<>();
-        ch1(out, summary); ch2(out, summary); ch3(out, summary, modules); ch4(out, summary, modules); ch5(out, summary);
-        log.info("说明文档：MANUAL 缺失，回退章节拼接 lines={} modules={}", out.size(), modules.size());
+        List<LineItem> out = new ArrayList<>(src);
+        while (out.size() < minLen) out.add(new LineItem(Kind.BLANK, ""));
         return out;
     }
 
     private void ch1(List<String> out, SoftwareSummaryVO s) {
-        out.add("第一章 软件概述");
-        out.add("1.1 软件简介");
-        multi(out, s!=null?s.getPurpose():null,
-                "本软件是一套面向汽车零配件质检环节的数据研判平台，旨在为质检管理人员提供" +
-                "从未料质检登记、缺陷研判、不合格品处置到质检任务调度的全流程数字化管理能力。" +
-                "平台通过融合工业扫码与量具数据自动采集技术，实现质检数据的实时录入与精准追溯，" +
-                "支持缺陷分布的智能研判与高风险批次的自动标记，帮助质检团队及时掌握来料质量状况" +
-                "并快速响应不合格品处置需求。");
-        out.add("系统采用前后端分离架构，后端基于 Spring Boot 框架开发，前端基于 React 框架构建，" +
-                "数据存储采用 MySQL 关系型数据库，文件存储采用 MinIO 对象存储。系统支持多角色分级" +
-                "权限管理，涵盖运营管理、工艺管理、化验管理、库管等多种岗位角色，各角色可根据职责" +
-                "访问相应功能模块。");
-        out.add("1.2 应用领域");
-        multi(out, s!=null?s.getTargetDomain():null,
-                "本平台主要应用于汽车整车及零部件制造企业的质检部门，适用于以下场景：");
-        out.add("（1）汽车零配件来料质检登记与结果追溯；");
-        out.add("（2）零配件缺陷类型判定与严重等级划分；");
-        out.add("（3）缺陷分布趋势分析与高风险批次识别；");
-        out.add("（4）不合格品处置申请与让步接收审批；");
-        out.add("（5）质检任务下发与执行状态跟踪；");
-        out.add("（6）质检数据统计分析与报表导出。");
-        out.add("适用对象包括：质检主管、质检工程师、来料检验员、不合格品处置专员、生产调度人员等。");
-        out.add("1.3 技术特点");
-        multi(out, s!=null?s.getTechFeatures():null,
-                "本平台具备以下技术特点：");
-        out.add("（1）前后端分离架构，后端 Spring Boot + 前端 React，支持独立部署与水平扩展；");
-        out.add("（2）工业扫码与量具数据自动采集，减少人工录入错误，提高数据准确性；");
-        out.add("（3）缺陷研判规则引擎，支持自定义缺陷类型与判定条件，灵活适配不同品类零配件；");
-        out.add("（4）高风险批次自动标记，基于缺陷率阈值实时预警；");
-        out.add("（5）多级权限控制，基于角色的访问控制（RBAC），确保数据安全；");
-        out.add("（6）数据可视化展示，支持缺陷分布图表、趋势曲线、批次对比等多种分析视图；");
-        out.add("（7）操作留痕与审计日志，所有关键操作均记录日志，支持追溯；");
-        out.add("（8）支持移动端与触控一体机，适配车间现场使用环境。");
-        out.add("1.4 系统架构");
-        out.add("本平台采用分层架构设计，自下而上分为数据层、服务层、应用层与展示层：");
-        out.add("（1）数据层：包括 MySQL 数据库（存储业务数据）和 MinIO 对象存储（存储质检报告、" +
-                "附件等文件），同时支持 Redis 缓存用于提升高频访问数据的响应速度；");
-        out.add("（2）服务层：基于 Spring Boot 构建，提供用户认证、权限管理、质检数据管理、" +
-                "缺陷研判、不合格品处置、任务调度、统计分析等核心业务服务；");
-        out.add("（3）应用层：通过 RESTful API 对外提供服务，支持前端 Web 应用、移动端及第三方系统集成；");
-        out.add("（4）展示层：基于 React 构建的 Web 前端，提供项目看板、质检登记、缺陷研判、" +
-                "报表分析等功能界面，同时支持响应式布局适配不同设备。");
+        out.add(CH1);
+        out.add(S1_1);
+        aiOnly(out, s != null ? s.getPurpose() : null, "软件简介");
+        out.add(S1_2);
+        aiOnly(out, s != null ? s.getTargetDomain() : null, "应用领域");
+        out.add(S1_3);
+        aiOnly(out, s != null ? s.getTechFeatures() : null, "技术特点");
+        out.add(S1_4);
+        aiOnly(out, s != null ? s.getSystemOverview() : null, "系统架构");
     }
     private void ch2(List<String> out, SoftwareSummaryVO s) {
-        out.add("第二章 安装与配置");
-        out.add("2.1 运行环境");
+        String lang = s != null ? s.getLanguage() : null;
+        out.add(CH2);
+        out.add("【注：本章为系统通用模板内容，非AI生成】");
+        out.add(S2_1);
         out.add("2.1.1 硬件环境");
         out.add("服务器端最低配置要求：");
         out.add("（1）CPU：4核及以上，推荐 8核；");
@@ -435,20 +1004,20 @@ public class ManualDocGenerator implements DocumentGenerator {
         out.add("客户端配置要求：");
         out.add("（1）PC：CPU 双核 2GHz 以上，内存 4GB 以上；");
         out.add("（2）移动终端：Android 8.0+ 或 iOS 12.0+；");
-        out.add("（3）车间触控一体机：15寸以上触摸屏，Windows 10 IoT。");
+        out.add("（3）触控终端：10寸以上触摸屏，Windows 10 或 Android 系统。");
         multi(out, s!=null?s.getRunHardware():null, null);
         out.add("2.1.2 软件环境");
         out.add("服务器端：");
         out.add("（1）操作系统：Windows Server 2019+ 或 CentOS 7+/Ubuntu 20.04+；");
-        out.add("（2）运行时：JDK 17+；");
+        out.add("（2）运行时：" + LanguageEnvironment.runtime(lang) + "；");
         out.add("（3）数据库：MySQL 8.0+；");
         out.add("（4）对象存储：MinIO（可选，默认本地文件系统）；");
         out.add("（5）缓存：Redis 6.0+（可选，用于会话与热点数据缓存）。");
         out.add("客户端：");
         out.add("（1）浏览器：Chrome 90+ / Edge 90+ / Firefox 88+；");
         out.add("（2）分辨率：建议 1366×768 及以上。");
-        multi(out, s!=null?s.getRunPlatform():null, null);
-        out.add("2.2 安装步骤");
+        multi(out, LanguageEnvironment.runPlatformOr(lang, s != null ? s.getRunPlatform() : null), null);
+        out.add(S2_2);
         out.add("2.2.1 数据库准备");
         out.add("（1）安装 MySQL 8.0 并启动服务；");
         out.add("（2）创建数据库：CREATE DATABASE ruanzhu DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci;");
@@ -456,10 +1025,10 @@ public class ManualDocGenerator implements DocumentGenerator {
                 "GRANT ALL PRIVILEGES ON ruanzhu.* TO 'ruanzhu'@'%'; FLUSH PRIVILEGES;");
         out.add("（4）执行数据库初始化脚本：mysql -u ruanzhu -p ruanzhu < schema.sql。");
         out.add("2.2.2 后端部署");
-        out.add("（1）从发布包获取后端可执行文件 ruanzhu.jar；");
-        out.add("（2）将 ruanzhu.jar 上传至服务器指定目录，如 /opt/ruanzhu/；");
-        out.add("（3）创建配置文件 application.yml，设置数据库连接、端口、文件存储路径等参数；");
-        out.add("（4）启动后端服务：java -jar ruanzhu.jar --spring.config.location=application.yml；");
+        out.add("（1）从发布包获取" + LanguageEnvironment.artifact(lang) + "；");
+        out.add("（2）将后端发布产物上传至服务器指定目录，如 /opt/app/；");
+        out.add("（3）创建配置文件（如 application.yml / config.yaml），设置数据库连接、端口、文件存储路径等参数；");
+        out.add("（4）启动后端服务：" + LanguageEnvironment.startCommand(lang) + "；");
         out.add("（5）验证服务启动：访问 http://服务器IP:8080/api/health，返回 success 表示启动成功。");
         out.add("2.2.3 前端部署");
         out.add("（1）从发布包获取前端构建产物 dist 目录；");
@@ -468,28 +1037,27 @@ public class ManualDocGenerator implements DocumentGenerator {
         out.add("（4）配置 Nginx 示例：server { listen 80; root /usr/share/nginx/html; " +
                 "location /api/ { proxy_pass http://localhost:8080/api/; } }。");
         out.add("2.2.4 服务启停");
-        out.add("（1）启动后端：nohup java -jar ruanzhu.jar --spring.config.location=application.yml > app.log 2>&1 &");
-        out.add("（2）停止后端：kill $(pgrep -f ruanzhu.jar)");
+        out.add("（1）启动后端：nohup " + LanguageEnvironment.startCommand(lang) + " > app.log 2>&1 &");
+        out.add("（2）停止后端：" + LanguageEnvironment.stopCommand(lang));
         out.add("（3）查看日志：tail -f app.log");
-        out.add("2.3 初始配置");
+        out.add(S2_3);
         out.add("2.3.1 系统参数配置");
         out.add("登录系统后进入 系统管理-参数配置，依次配置：");
         out.add("（1）组织信息：机构名称、软件版本、著作权人、开发完成日期；");
-        out.add("（2）系统参数：缺陷率阈值、高风险标记规则、质检批次默认抽样比例；");
+        out.add("（2）业务参数：根据实际业务需要配置相关阈值、默认值与规则；");
         out.add("（3）存储配置：文件存储路径、最大上传文件大小、允许的文件类型。");
         out.add("2.3.2 用户与角色配置");
         out.add("（1）进入 系统管理-用户管理，创建各岗位用户账号；");
-        out.add("（2）进入 系统管理-角色管理，配置角色权限，包括质检主管、质检工程师、" +
-                "来料检验员、不合格品处置专员、生产调度员等；");
+        out.add("（2）进入 系统管理-角色管理，配置角色权限，包括系统管理员、业务主管、" +
+                "一线操作员、数据分析员等；");
         out.add("（3）为用户分配相应角色，用户登录后即可使用对应功能。");
         out.add("2.3.3 基础数据配置");
-        out.add("（1）零配件品类维护：录入本企业涉及的零配件品类及对应的检验指标；");
-        out.add("（2）缺陷类型维护：定义划痕、裂纹、变形、尺寸超差、镀层脱落等缺陷类型" +
-                "及对应的严重等级（轻微、一般、严重、致命）；");
-        out.add("（3）供应商维护：录入供应商信息及对应的零配件供应范围。");
+        out.add("（1）业务分类维护：录入本企业涉及的业务分类及对应的属性字段；");
+        out.add("（2）数据字典维护：定义系统中使用的各类枚举值、状态码与等级划分；");
+        out.add("（3）合作方维护：录入相关合作方信息及对应的业务范围。");
     }
     private void ch3(List<String> out, SoftwareSummaryVO s, Map<String, List<String>> modules) {
-        out.add("第三章 功能说明");
+        out.add(CH3);
         String mf = s != null ? s.getMainFunctions() : null;
         if (mf != null && !mf.trim().isEmpty()) {
             multi(out, mf, null);
@@ -503,7 +1071,13 @@ public class ManualDocGenerator implements DocumentGenerator {
             sb.append("等。各模块数据互通，形成完整的业务管理链条。");
             out.add(sb.toString());
         }
-        int idx = 1;
+        // 与正文第三章保持同一结构：3.1 登录系统、3.2 工作台首页，其后按模块顺序编号
+        out.add(S3_1);
+        out.add("打开浏览器，在地址栏输入系统访问地址，进入系统登录页面。" +
+                "在登录页面输入用户名和密码，点击 登录 按钮即可进入系统。");
+        out.add(S3_2);
+        out.add("登录成功后进入系统工作台首页，首页展示关键业务指标统计卡片、各功能模块入口与最近操作记录。");
+        int idx = 3;
         for (Map.Entry<String, List<String>> e : modules.entrySet()) {
             out.add("3." + idx + " " + e.getKey());
             out.add(e.getKey() + "模块主要功能包括：");
@@ -514,68 +1088,61 @@ public class ManualDocGenerator implements DocumentGenerator {
             }
             idx++;
         }
-        int reportIdx = idx;
-        out.add("3." + reportIdx + " 统计报表");
-        out.add("统计报表模块提供多维度的数据分析报表，主要功能包括：");
-        out.add("（1）业务数据统计报表：按时间、类型等维度统计业务数据；");
-        out.add("（2）趋势分析报表：展示关键指标的变化趋势；");
-        out.add("（3）报表导出：支持将报表导出为 Excel、PDF 格式。");
-        out.add("3." + (reportIdx + 1) + " 系统管理");
-        out.add("系统管理模块提供系统级配置与管理功能，主要功能包括：");
-        out.add("（1）用户管理：创建、修改、禁用用户账号，重置密码；");
-        out.add("（2）角色管理：配置角色及其对应的菜单权限与数据权限；");
-        out.add("（3）菜单管理：维护系统菜单结构与权限标识；");
-        out.add("（4）参数配置：配置系统运行参数；");
-        out.add("（5）日志审计：查看系统操作日志与登录日志。");
     }
 
-    private void ch4(List<String> out, SoftwareSummaryVO s, Map<String, List<String>> modules) {
-        out.add("第四章 操作指南");
-        out.add("4.1 登录系统");
-        out.add("（1）打开浏览器，在地址栏输入系统访问地址；");
-        out.add("（2）在登录页面输入用户名和密码；");
-        out.add("（3）首次登录系统会强制要求修改初始密码，请按提示设置新密码；");
-        out.add("（4）密码修改成功后，使用新密码重新登录即可进入系统首页（工作台）。");
-        out.add("4.2 工作台首页");
-        out.add("登录成功后进入系统工作台首页，首页展示内容包括：");
-        out.add("（1）统计卡片：展示今日记录数、本月记录数、异常告警数、在线用户数等关键指标；");
-        out.add("（2）功能模块入口：以卡片形式展示各功能模块，点击可快速进入对应模块；");
-        out.add("（3）最近操作记录：展示系统最近的操作日志，便于了解系统运行状态。");
+    private void ch4(List<LineItem> out, SoftwareSummaryVO s, Map<String, List<String>> modules,
+                     Map<String, byte[]> screenshots) {
+        int[] fig4 = {0};
+        out.add(new LineItem(Kind.H1, CH4, true));
+        out.add(new LineItem(Kind.BODY, "【注：本章为系统通用模板内容，非AI生成】"));
+
+        // 4.1 登录系统
+        out.add(new LineItem(Kind.H2, S4_1, true));
+        out.add(new LineItem(Kind.BODY, "（1）打开浏览器，在地址栏输入系统访问地址；"));
+        out.add(new LineItem(Kind.BODY, "（2）在登录页面输入用户名和密码；"));
+        out.add(new LineItem(Kind.BODY, "（3）首次登录系统会强制要求修改初始密码，请按提示设置新密码；"));
+        out.add(new LineItem(Kind.BODY, "（4）密码修改成功后，使用新密码重新登录即可进入系统首页（工作台）。"));
+        addFigure(out, screenshots.get("login"), "系统登录页面", fig4);
+
+        // 4.2 工作台首页
+        out.add(new LineItem(Kind.H2, S4_2, true));
+        out.add(new LineItem(Kind.BODY, "登录成功后进入系统工作台首页，首页展示内容包括："));
+        out.add(new LineItem(Kind.BODY, "（1）统计卡片：展示今日记录数、本月记录数、异常告警数、在线用户数等关键指标；"));
+        out.add(new LineItem(Kind.BODY, "（2）功能模块入口：以卡片形式展示各功能模块，点击可快速进入对应模块；"));
+        out.add(new LineItem(Kind.BODY, "（3）最近操作记录：展示系统最近的操作日志，便于了解系统运行状态。"));
+        addFigure(out, screenshots.get("home"), "系统工作台首页", fig4);
+
+        // 4.3 起：各功能模块操作步骤（与功能菜单一一对应）
         int idx = 3;
+        int modIdx = 1;
         for (Map.Entry<String, List<String>> e : modules.entrySet()) {
-            out.add("4." + idx + " " + e.getKey());
-            out.add("（1）在左侧菜单栏点击 " + e.getKey() + "，展开该模块下的功能菜单；");
-            out.add("（2）点击需要操作的功能项，进入对应的列表页面，页面展示已录入的数据记录；");
-            out.add("（3）在列表页面可通过顶部搜索框输入关键词进行查询，点击 查询 按钮筛选数据，点击 重置 按钮清空查询条件；");
-            out.add("（4）点击 新增 按钮，打开信息录入表单；");
-            out.add("（5）在表单中填写各项信息，带 * 号的为必填项；");
-            out.add("（6）填写完成后点击 保存 按钮提交数据，系统校验通过后保存成功；");
-            out.add("（7）在列表页面可对已有记录进行 查看、编辑 操作，操作完成后系统自动更新数据。");
+            String moduleName = e.getKey();
+            out.add(new LineItem(Kind.H2, "4." + idx + " " + moduleName, true));
+            out.add(new LineItem(Kind.BODY, "（1）在左侧菜单栏点击 " + moduleName + "，展开该模块下的功能菜单；"));
+            out.add(new LineItem(Kind.BODY, "（2）点击需要操作的功能项，进入对应的列表页面，页面展示已录入的数据记录；"));
+            out.add(new LineItem(Kind.BODY, "（3）在列表页面可通过顶部搜索框输入关键词进行查询，点击 查询 按钮筛选数据，点击 重置 按钮清空查询条件；"));
+            addFigure(out, screenshots.get("list_" + modIdx), moduleName + "列表页面操作", fig4);
+            out.add(new LineItem(Kind.BODY, "（4）点击 新增 按钮，打开信息录入表单；"));
+            out.add(new LineItem(Kind.BODY, "（5）在表单中填写各项信息，带 * 号的为必填项；"));
+            out.add(new LineItem(Kind.BODY, "（6）填写完成后点击 保存 按钮提交数据，系统校验通过后保存成功；"));
+            addFigure(out, screenshots.get("form_filled_" + modIdx), moduleName + "信息录入页面", fig4);
+            out.add(new LineItem(Kind.BODY, "（7）在列表页面可对已有记录进行 查看、编辑 操作，操作完成后系统自动更新数据。"));
             int n = 1;
             for (String f : e.getValue()) {
-                out.add("（" + cnNum(n + 7) + "）" + f + "：在左侧菜单点击 " + f + "，按上述流程进行操作。");
+                out.add(new LineItem(Kind.BODY, "（" + cnNum(n + 7) + "）" + f + "：在左侧菜单点击 " + f + "，按上述流程进行操作。"));
                 n++;
             }
             idx++;
+            modIdx++;
         }
-        out.add("4." + idx + " 统计报表");
-        idx++;
-        out.add("（1）进入 统计报表 菜单，选择需要查看的报表类型；");
-        out.add("（2）设置查询条件（如时间段等），点击 查询；");
-        out.add("（3）系统展示报表数据与可视化图表；");
-        out.add("（4）点击 导出，选择导出格式，下载报表文件。");
-        out.add("4." + idx + " 用户与权限管理");
-        idx++;
-        out.add("（1）用户管理：进入 系统管理-用户管理 页面，点击 新增用户，" +
-                "填写用户名、姓名、所属部门、角色，点击 保存；");
-        out.add("（2）角色管理：进入 系统管理-角色管理 页面，点击 新增角色，" +
-                "配置角色名称、菜单权限、数据权限，点击 保存；");
-        out.add("（3）密码重置：在用户列表中选择用户，点击 重置密码，" +
-                "系统生成临时密码并通知用户首次登录后修改。");
-        out.add("4." + idx + " 系统日志查看");
-        out.add("（1）进入 系统管理-操作日志 页面，查看系统操作记录；");
-        out.add("（2）可按操作人、操作类型、时间段筛选日志；");
-        out.add("（3）进入 系统管理-登录日志 页面，查看用户登录记录。");
+    }
+
+    /** 追加一张截图与对应图注（图号按实际嵌入顺序递增，无截图时不生成图注） */
+    private static void addFigure(List<LineItem> out, byte[] img, String caption, int[] figNo) {
+        if (img == null || img.length == 0) return;
+        out.add(new LineItem(img, "png"));
+        out.add(new LineItem(Kind.FIGURE_CAPTION,
+                String.format("图4-%d %s", ++figNo[0], caption), false));
     }
 
     private static String cnNum(int n) {
@@ -584,8 +1151,9 @@ public class ManualDocGenerator implements DocumentGenerator {
     }
 
     private void ch5(List<String> out, SoftwareSummaryVO s) {
-        out.add("第五章 维护与常见问题");
-        out.add("5.1 系统维护");
+        out.add(CH5);
+        out.add("【注：本章为系统通用模板内容，非AI生成】");
+        out.add(S5_1);
         out.add("5.1.1 日常维护");
         out.add("（1）每日检查数据库备份是否正常完成，确认备份文件完整可用；");
         out.add("（2）每日检查服务器磁盘空间，确保可用空间不低于 20%；");
@@ -601,28 +1169,31 @@ public class ManualDocGenerator implements DocumentGenerator {
         out.add("（2）文件备份：MinIO 或本地文件存储每日增量备份，保留最近 90 天；");
         out.add("（3）恢复演练：每季度进行一次备份恢复演练，确保备份可用；");
         out.add("（4）恢复步骤：停止应用服务 → 恢复数据库 → 恢复文件 → 启动应用服务 → 验证数据完整性。");
-        out.add("5.2 常见问题");
+        out.add(S5_2);
         out.add("Q1：无法登录系统？");
         out.add("A：请检查以下内容：");
         out.add("（1）账号是否被锁定（连续 5 次输错密码会锁定账号，需管理员解锁）；");
         out.add("（2）密码是否过期（系统默认 90 天密码过期，需修改密码）；");
         out.add("（3）数据库连接是否正常（检查数据库服务状态与连接配置）；");
         out.add("（4）网络是否正常（检查客户端与服务器之间的网络连通性）。");
-        out.add("Q2：扫码录入零配件编号无响应？");
-        out.add("A：请检查扫码枪是否正常连接，是否已正确安装驱动，扫码枪输入模式是否为" +
-                "键盘仿真模式。");
-        out.add("Q3：量具数据无法自动采集？");
-        out.add("A：请检查量具是否通过 USB 或串口正确连接，量具通信参数（波特率、数据位、" +
-                "停止位、校验位）是否与系统配置一致，量具驱动是否已安装。");
+        out.add("Q2：数据录入后保存失败？");
+        out.add("A：请检查以下内容：");
+        out.add("（1）必填项是否已全部填写（带 * 号的字段为必填项）；");
+        out.add("（2）数据格式是否符合要求（如日期、数字、手机号等格式校验）；");
+        out.add("（3）是否存在重复数据（部分业务字段要求唯一性）；");
+        out.add("（4）网络连接是否正常，可尝试刷新页面后重新提交。");
+        out.add("Q3：查询不到已录入的数据？");
+        out.add("A：请确认所选查询条件是否正确，时间范围是否覆盖数据录入时间，" +
+                "当前用户权限是否覆盖对应数据范围。");
         out.add("Q4：报表导出为空？");
         out.add("A：请确认所选时间范围内是否存在数据，当前用户权限是否覆盖对应数据范围，" +
                 "查询条件是否设置正确。");
-        out.add("Q5：高风险批次标记不准确？");
-        out.add("A：请检查 系统管理-参数配置 中的缺陷率阈值设置是否合理，可根据实际业务" +
-                "需要调整阈值。");
+        out.add("Q5：业务流程审批不通过？");
+        out.add("A：请联系审批人确认审批意见，或检查提交的业务数据是否符合审批规则要求。" +
+                "如对审批结果有异议，可联系上级管理员协调处理。");
         out.add("Q6：AI 生成内容失败？");
         out.add("A：请联系管理员检查 AI Key 是否有效、网络是否可访问 AI 服务、账户余额是否充足。");
-        out.add("5.3 技术支持");
+        out.add(S5_3);
         out.add("如遇本手册未涵盖的问题，请通过以下方式联系技术支持：");
         out.add("（1）电话：400-XXX-XXXX");
         out.add("（2）邮箱：support@example.com");
@@ -647,8 +1218,8 @@ public class ManualDocGenerator implements DocumentGenerator {
             g.setColor(new Color(30, 60, 120));
             g.drawString("系统架构图", W/2 - 50, 30);
 
-            String[] layers = {"展示层 (React Web / 移动端)", "应用层 (RESTful API)",
-                    "服务层 (Spring Boot 业务服务)", "数据层 (MySQL / MinIO / Redis)"};
+            String[] layers = {"展示层 (Web 前端 / 移动端)", "应用层 (RESTful API)",
+                    "服务层 (后端业务服务)", "数据层 (MySQL / MinIO / Redis)"};
             Color[] colors = {new Color(180, 210, 255), new Color(150, 200, 230),
                     new Color(120, 180, 210), new Color(90, 150, 190)};
 
@@ -668,9 +1239,9 @@ public class ManualDocGenerator implements DocumentGenerator {
                 g.setColor(new Color(60, 60, 60));
                 String[] mods;
                 switch (i) {
-                    case 0: mods = new String[]{"项目看板", "质检登记", "缺陷研判", "报表分析"}; break;
-                    case 1: mods = new String[]{"认证授权", "质检管理", "研判分析", "处置审批"}; break;
-                    case 2: mods = new String[]{"用户服务", "质检服务", "研判服务", "任务调度"}; break;
+                    case 0: mods = new String[]{"工作台", "业务录入", "审批处理", "报表分析"}; break;
+                    case 1: mods = new String[]{"认证授权", "业务管理", "流程引擎", "统计分析"}; break;
+                    case 2: mods = new String[]{"用户服务", "业务服务", "流程服务", "任务调度"}; break;
                     default: mods = new String[]{"MySQL", "MinIO", "Redis"}; break;
                 }
                 int mx = 80;
@@ -702,6 +1273,25 @@ public class ManualDocGenerator implements DocumentGenerator {
         }
     }
 
+    /**
+     * 仅输出 AI 生成的内容，绝不兜底编造。
+     * 如果 AI 值为空或为失败提示，则输出明确的未生成标记。
+     */
+    private static void aiOnly(List<String> out, String aiVal, String sectionName) {
+        if (aiVal != null && !aiVal.trim().isEmpty()
+                && !aiVal.contains("生成失败") && !aiVal.contains("未生成")) {
+            for (String p : aiVal.split("\r?\n")) {
+                String s = p.replace("\t", "    ").trim();
+                if (!s.isEmpty()) out.add(s);
+            }
+        } else {
+            String reason = (aiVal != null && aiVal.contains("生成失败"))
+                    ? "AI生成失败：" + aiVal
+                    : "AI未生成此部分内容";
+            out.add("【" + sectionName + " - " + reason + "】");
+        }
+    }
+
     private static void multi(List<String> out, String val, String fallback) {
         String v = (val != null && !val.trim().isEmpty()) ? val : fallback;
         if (v == null) return;
@@ -711,9 +1301,25 @@ public class ManualDocGenerator implements DocumentGenerator {
         }
     }
 
+    /** 读取用户在编辑器保存的最新 MANUAL 手册（HTML 转纯文本行）；无保存记录时返回 null */
+    private List<String> loadSavedManualLines() {
+        List<FileRecord> saved = fileRecordRepository.findByProjectIdAndFileType(projectId, "MANUAL");
+        if (saved.isEmpty()) return null;
+        FileRecord latest = saved.stream()
+                .max(Comparator.comparingInt(v -> v.getVersion() != null ? v.getVersion() : 0))
+                .get();
+        byte[] data = storageClient.download(latest.getStoragePath());
+        List<String> lines = htmlToPlainLines(new String(data, StandardCharsets.UTF_8));
+        log.info("说明文档：用保存的 MANUAL name={}, size={}B, lines={}",
+                latest.getFileName(), data.length, lines.size());
+        return lines.isEmpty() ? null : lines;
+    }
+
     private static List<String> htmlToPlainLines(String html) {
         if (html == null || html.isEmpty()) return java.util.Collections.emptyList();
         String s = html;
+        // 剥离 markdown 代码围栏（AI 输出常带 ```html ... ```）
+        s = s.replaceAll("(?s)```[a-zA-Z]*\\s*\\n?", "").replace("```", "");
         s = s.replaceAll("(?is)<script.*?>.*?</script>", " ");
         s = s.replaceAll("(?is)<style.*?>.*?</style>", " ");
         s = s.replaceAll("(?i)<(br\\s*/?|/p|/div|/h[1-6]|/li|/tr|/blockquote)>", "\n");
@@ -785,35 +1391,37 @@ public class ManualDocGenerator implements DocumentGenerator {
         int onPage = 0;
         for (int i = 0; i < items.size(); i++) {
             LineItem it = items.get(i);
-            onPage++;
+            onPage += it.lineWeight;
             final boolean lastLine = (i == items.size() - 1);
             XWPFParagraph para = doc.createParagraph();
             stylePara(para, it.kind);
-            spacing(para);
+            spacing(para, it.lineWeight);
 
             if (it.kind == Kind.IMAGE && it.imageData != null) {
-                // 嵌入图片
+                // 嵌入图片：高度按 IMAGE_LINE_WEIGHT × 16pt 折算，与分页计数保持一致
                 try {
                     XWPFRun run = para.createRun();
                     int picType = "png".equalsIgnoreCase(it.imageFormat)
                             ? XWPFDocument.PICTURE_TYPE_PNG
                             : XWPFDocument.PICTURE_TYPE_JPEG;
-                    // 图片宽度约 14cm（适配 A4 正文宽度），按比例
+                    // 按原始宽高比等比缩放（宽度 420pt，最高 320pt），与分页计数保持一致
+                    int imgHeightPt = (int) Math.ceil(it.imageHeightPt);
                     run.addPicture(new java.io.ByteArrayInputStream(it.imageData),
                             picType, "diagram.png",
-                            Units.toEMU(420), Units.toEMU(252));
+                            Units.toEMU(it.imageWidthPt), Units.toEMU(imgHeightPt));
                 } catch (Exception e) {
                     log.warn("DOCX 嵌入图片失败", e);
                 }
             } else {
                 int size; String font;
                 switch (it.kind) {
-                    case TITLE:   size = FS_TITLE; font = FONT_H;  break;
-                    case VERSION: size = FS_H2;    font = FONT_CN; break;
-                    case TOC:     size = FS_BODY;  font = FONT_CN; break;
-                    case H1:      size = FS_H1;    font = FONT_H;  break;
-                    case H2:      size = FS_H2;    font = FONT_H;  break;
-                    default:      size = FS_BODY;  font = FONT_CN; break;
+                    case TITLE:         size = FS_TITLE; font = FONT_H;  break;
+                    case VERSION:       size = FS_H2;    font = FONT_CN; break;
+                    case TOC:           size = FS_BODY;  font = FONT_CN; break;
+                    case H1:            size = FS_H1;    font = FONT_H;  break;
+                    case H2:            size = FS_H2;    font = FONT_H;  break;
+                    case FIGURE_CAPTION:size = 9;        font = FONT_CN; break;
+                    default:            size = FS_BODY;  font = FONT_CN; break;
                 }
                 XWPFRun run = para.createRun();
                 run.setText(it.text);
@@ -822,12 +1430,14 @@ public class ManualDocGenerator implements DocumentGenerator {
                 run.setBold(it.bold || it.kind == Kind.TITLE || it.kind == Kind.H1 || it.kind == Kind.H2);
             }
 
-            if (onPage == LPP) {
-                onPage = 0;
+            // 累加 lineWeight 超过或达到本页容量时插分页符；分页符独立成段，不与末行文字混排
+            if (onPage >= LPP) {
+                onPage = onPage - LPP;
                 boolean need = !lastLine || pageBreakAtLastLine;
                 if (need) {
-                    XWPFRun pb = para.createRun();
-                    pb.addBreak(BreakType.PAGE);
+                    XWPFParagraph pbPara = doc.createParagraph();
+                    spacing(pbPara, 1);
+                    pbPara.createRun().addBreak(BreakType.PAGE);
                 }
             }
         }
@@ -835,7 +1445,7 @@ public class ManualDocGenerator implements DocumentGenerator {
 
     private static void addPageBreakOnly(XWPFDocument doc) {
         XWPFParagraph para = doc.createParagraph();
-        spacing(para);
+        spacing(para, 1);
         para.createRun().addBreak(BreakType.PAGE);
     }
 
@@ -843,18 +1453,11 @@ public class ManualDocGenerator implements DocumentGenerator {
         switch (k) {
             case TITLE:
             case VERSION:
+            case FIGURE_CAPTION:
                 para.setAlignment(ParagraphAlignment.CENTER);
                 break;
-            case TOC:
-                para.setSpacingAfter(200);
-                break;
-            case H1:
-                para.setSpacingBefore(60);
-                break;
-            case H2:
-                para.setSpacingBefore(40);
-                break;
             case BODY:
+                // 首行缩进 2 字符（10pt 宋体 ≈ 210twips/字 × 2 = 420twips）
                 para.setIndentationFirstLine(420);
                 break;
             default:
@@ -862,12 +1465,13 @@ public class ManualDocGenerator implements DocumentGenerator {
         }
     }
 
-    private static void spacing(XWPFParagraph para) {
+    /** 行距 = lineWeight × 16pt（LSP=320twips），段前段后统一 0，保证每页严格 30 逻辑行 */
+    private static void spacing(XWPFParagraph para, int lineWeight) {
         CTPPr ppr = para.getCTP().isSetPPr() ? para.getCTP().getPPr() : para.getCTP().addNewPPr();
         CTSpacing sp = ppr.isSetSpacing() ? ppr.getSpacing() : ppr.addNewSpacing();
         sp.setBefore(BigInteger.ZERO);
         sp.setAfter(BigInteger.ZERO);
-        sp.setLine(BigInteger.valueOf(LSP));
+        sp.setLine(BigInteger.valueOf((long) LSP * lineWeight));
         sp.setLineRule(STLineSpacingRule.EXACT);
     }
 }

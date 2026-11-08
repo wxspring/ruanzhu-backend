@@ -73,19 +73,18 @@ public class SourceCodeDocGenerator implements DocumentGenerator {
         List<String> src = normalizedLines(resolveCodeContent());
         int N = src.size();
 
-        // 代码不足 3000 行时循环拼接，保证前/后 30 页都是真实代码
-        List<String> expanded = ensureAtLeast(src, TOTAL_OUT_LINES);
-        List<String> front = new ArrayList<>(expanded.subList(0, FL));
-        List<String> back  = new ArrayList<>(expanded.subList(expanded.size() - BL, expanded.size()));
+        // 一般交存规则：满 60 页提交前 30 页 + 后 30 页；不足 60 页提交全部源码。
+        // 严禁循环拼接同一段代码，重复代码会被视为材料不真实。
+        List<String> selected = selectDepositLines(src);
+        int pages = (selected.size() + LPP - 1) / LPP;
 
         try (XWPFDocument doc = new XWPFDocument()) {
             setupPage(doc);
-            writeBlock(doc, front, true);
-            writeBlock(doc, back, false);
+            writeBlock(doc, selected, false);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             doc.write(out);
-            log.info("程序文档：源={}行 循环后={}行 输出=60页x{}行", N, expanded.size(), LPP);
+            log.info("程序文档：源={}行 提交={}行 输出={}页x{}行", N, selected.size(), pages, LPP);
             return out.toByteArray();
         } catch (Exception e) {
             log.error("generateWord failed", e);
@@ -103,9 +102,7 @@ public class SourceCodeDocGenerator implements DocumentGenerator {
      */
     @Override public byte[] generatePdf() {
         List<String> src = normalizedLines(resolveCodeContent());
-        List<String> expanded = ensureAtLeast(src, TOTAL_OUT_LINES);
-        List<String> front = new ArrayList<>(expanded.subList(0, FL));
-        List<String> back  = new ArrayList<>(expanded.subList(expanded.size() - BL, expanded.size()));
+        List<String> all = selectDepositLines(src);
 
         // A4: 595×842pt; 边距 8mm≈22.7pt, 10mm≈28.3pt
         Rectangle page = PageSize.A4;
@@ -120,9 +117,6 @@ public class SourceCodeDocGenerator implements DocumentGenerator {
             // 字体：用 Helvetica（iText 内置）8pt，行距 15.5pt
             Font font = new Font(Font.FontFamily.HELVETICA, 8, Font.NORMAL, BaseColor.BLACK);
             float leading = 15.5f; // 每行 15.5pt × 50 = 775pt < 正文 796pt
-
-            List<String> all = new ArrayList<>(front);
-            all.addAll(back);
 
             int lineNo = 0;
             for (String line : all) {
@@ -148,12 +142,19 @@ public class SourceCodeDocGenerator implements DocumentGenerator {
         }
     }
 
-    /** 代码不足 minLen 时循环拼接 */
-    private static List<String> ensureAtLeast(List<String> src, int minLen) {
-        if (src.size() >= minLen) return src;
-        List<String> out = new ArrayList<>(minLen);
-        while (out.size() < minLen) out.addAll(src);
-        return out;
+    /**
+     * 按一般交存规则选取提交的源代码行：
+     * 源码满 60 页（前30页+后30页）时提交前 30 页 + 后 30 页；不足 60 页时提交全部。
+     * 不使用循环拼接，避免同一段代码重复出现。
+     */
+    private static List<String> selectDepositLines(List<String> src) {
+        if (src.size() >= TOTAL_OUT_LINES) {
+            List<String> out = new ArrayList<>(TOTAL_OUT_LINES);
+            out.addAll(src.subList(0, FL));
+            out.addAll(src.subList(src.size() - BL, src.size()));
+            return out;
+        }
+        return src;
     }
 
     private String resolveCodeContent() {

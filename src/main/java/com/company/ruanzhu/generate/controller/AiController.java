@@ -48,12 +48,15 @@ public class AiController {
         }
 
         // Generate all fields
+        String functionMenu = project.getSoftwareSummary() != null
+                ? project.getSoftwareSummary().getFunctionMenu() : null;
         SoftwareSummaryVO vo = aiContentService.generateAllFields(
                 project.getName(),
                 project.getSoftwareSummary() != null ? project.getSoftwareSummary().getCategory() : "应用软件",
                 project.getSoftwareSummary() != null ? project.getSoftwareSummary().getLanguage() : "Java",
                 "",
-                codeAnalysis
+                codeAnalysis,
+                functionMenu
         );
 
         return Result.success(vo);
@@ -91,7 +94,8 @@ public class AiController {
             case "mainFunctions" -> aiContentService.generateMainFunctions(
                     project.getName(),
                     project.getSoftwareSummary() != null ? project.getSoftwareSummary().getCategory() : "应用软件",
-                    codeAnalysis);
+                    codeAnalysis,
+                    project.getSoftwareSummary() != null ? project.getSoftwareSummary().getFunctionMenu() : null);
             case "techFeatures" -> aiContentService.generateTechFeatures(
                     project.getName(),
                     project.getSoftwareSummary() != null ? project.getSoftwareSummary().getLanguage() : "Java",

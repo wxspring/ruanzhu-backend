@@ -1,5 +1,6 @@
 package com.company.ruanzhu.generate.service.impl;
 
+import com.company.ruanzhu.common.util.LanguageEnvironment;
 import com.company.ruanzhu.generate.ai.AiClient;
 import com.company.ruanzhu.generate.service.AiContentService;
 import com.company.ruanzhu.generate.util.FunctionMenuNormalizer;
@@ -65,26 +66,40 @@ public class AiContentServiceImpl implements AiContentService {
     }
 
     @Override
-    public String generateMainFunctions(String softwareName, String category, String codeAnalysis) {
+    public String generateMainFunctions(String softwareName, String category, String codeAnalysis, String functionMenu) {
         String systemPrompt = """
                 你是一个专业的软件著作权申请材料撰写专家。请根据提供的软件信息，撰写"主要功能"部分。
-                要求：
-                1. 字数在800-1000字之间
-                2. 详细描述每个功能模块的作用
-                3. 说明各功能模块之间的关系和衔接流程
-                4. 体现功能的完整性和系统性
-                5. 使用"1. xxx模块：..."的格式列举
-                6. 最后总结各模块的协作关系
-                7. 语言正式、专业
+
+                【输出格式】
+                按功能菜单中的一级菜单模块顺序，逐个描述每个模块，使用"模块名称模块负责/支持/用于..."的格式，每个模块之间用分号；分隔。模块名称必须与功能菜单中的一级菜单名称完全一致。
+
+                每个模块的描述必须包含以下三方面内容（用逗号连接）：
+                1. 该模块的核心业务职责（一句话概括）
+                2. 列表页展示的主要字段（如编号、名称、状态、创建时间等）
+                3. 录入页需填写的关键字段，以及支持的操作（新增、编辑、查询、删除、导入导出、审批等）
+
+                所有模块描述完后，另起一段说明各模块之间的业务衔接关系。
+
+                【示例】
+                数据核验审批模块负责发起市政基础设施数据核验并跟踪整改情况，列表页展示核验编号、项目名称、数据类型、核验状态、提交人、提交时间等字段，录入页需填写项目名称、数据类型、核验内容、附件说明，支持新增、编辑、查询、提交审批、导出等操作；数字化标准配置模块支持配置BIM模型构件编码规则并下发验收标准，列表页展示标准编号、标准名称、适用范围、生效日期、状态等字段，录入页需填写标准名称、适用范围、验收规则、阈值参数，支持新增、编辑、查询、启用、停用等操作；工程数据归集模块用于录入项目基础数据并登记参建单位信息，列表页展示项目编号、项目名称、参建单位、数据类型、录入时间等字段，录入页需填写项目名称、参建单位、数据类型、基础数据说明，支持新增、编辑、查询、导入、导出等操作。
+                各模块之间业务衔接紧密，数据核验审批的结果会回写至工程数据归集的项目记录中，数字化标准配置下发的编码规则被各模块引用，项目数据申报的数据来源于工程数据归集的归集结果。
+
+                【禁止事项】
+                - 不要使用"待补充""XXX""相关信息"等占位符
+                - 不要省略列表字段和录入字段的具体内容
+                - 模块名称必须与功能菜单完全一致，不要自行修改
                 """;
 
         String userPrompt = String.format("""
                 软件名称：%s
                 软件分类：%s
                 代码分析结果：%s
+                功能菜单（一级菜单为模块名，子菜单为功能点）：
+                %s
 
-                请撰写该软件的主要功能说明，要求800-1000字，详细描述各功能模块及其关系。
-                """, softwareName, category, codeAnalysis);
+                请按照上述格式，逐个描述功能菜单中的每个一级菜单模块。
+                """, softwareName, category, codeAnalysis,
+                functionMenu != null ? functionMenu : "（功能菜单未提供）");
 
         return aiClient.generate(systemPrompt, userPrompt);
     }
@@ -115,7 +130,7 @@ public class AiContentServiceImpl implements AiContentService {
 
     @Override
     public SoftwareSummaryVO generateAllFields(String softwareName, String category, String language,
-                                                String frameworks, String codeAnalysis) {
+                                                String frameworks, String codeAnalysis, String functionMenu) {
         log.info("Generating all summary fields for software: {}", softwareName);
 
         SoftwareSummaryVO vo = new SoftwareSummaryVO();
@@ -135,7 +150,7 @@ public class AiContentServiceImpl implements AiContentService {
         }
 
         try {
-            vo.setMainFunctions(generateMainFunctions(softwareName, category, codeAnalysis));
+            vo.setMainFunctions(generateMainFunctions(softwareName, category, codeAnalysis, functionMenu));
         } catch (Exception e) {
             log.error("Failed to generate main functions", e);
             vo.setMainFunctions("【生成失败，请手动填写】");
@@ -200,10 +215,10 @@ public class AiContentServiceImpl implements AiContentService {
         sb.append("开发的硬件环境：").append(vo.getDevHardware() != null ? vo.getDevHardware() : "Intel Core i5 及以上，8GB 内存，500GB 硬盘").append("\n");
         sb.append("运行的硬件环境：").append(vo.getRunHardware() != null ? vo.getRunHardware() : "Intel Core i3 及以上，4GB 内存，200GB 硬盘").append("\n");
         sb.append("开发该软件的操作系统：").append(vo.getDevOs() != null ? vo.getDevOs() : "Windows 10/11 64位").append("\n");
-        sb.append("软件开发环境/开发工具：").append(vo.getDevTools() != null ? vo.getDevTools() : (language != null && language.equalsIgnoreCase("Java") ? "IntelliJ IDEA, Maven, Git" : "VS Code, Git")).append("\n");
-        sb.append("该软件的运行平台/操作系统：").append(vo.getRunPlatform() != null ? vo.getRunPlatform() : "Windows Server 2019 或 CentOS 7.x").append("\n");
-        sb.append("软件运行支撑环境/支持软件：").append(vo.getRunSupport() != null ? vo.getRunSupport() : (language != null && language.equalsIgnoreCase("Java") ? "JDK 1.8, Tomcat 9.0, MySQL 8.0, Redis 6.0, Nginx 1.20" : "Node.js 18.x, MySQL 8.0, Redis 6.0, Nginx 1.20")).append("\n");
-        sb.append("编程语言：").append(language != null ? language : "Java").append("\n");
+        sb.append("软件开发环境/开发工具：").append(LanguageEnvironment.devToolsOr(language, vo.getDevTools())).append("\n");
+        sb.append("该软件的运行平台/操作系统：").append(LanguageEnvironment.runPlatformOr(language, vo.getRunPlatform())).append("\n");
+        sb.append("软件运行支撑环境/支持软件：").append(LanguageEnvironment.supportStackOr(language, vo.getRunSupport())).append("\n");
+        sb.append("编程语言：").append(language != null ? language : "按项目实际编程语言填写").append("\n");
         sb.append("源程序量：").append(vo.getCodeLines() != null ? vo.getCodeLines() + " 行" : "12000 行").append("\n");
         sb.append("开发目的：").append(vo.getPurpose() != null ? vo.getPurpose() : "").append("\n");
         sb.append("面向领域：").append(vo.getTargetDomain() != null ? vo.getTargetDomain() : "").append("\n");

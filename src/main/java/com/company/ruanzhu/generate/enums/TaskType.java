@@ -7,7 +7,8 @@ import lombok.Getter;
 public enum TaskType {
     CODE("CODE", "代码生成"),
     MANUAL("MANUAL", "手册生成"),
-    SCREENSHOT("SCREENSHOT", "截图生成");
+    SCREENSHOT("SCREENSHOT", "截图生成"),
+    EXPORT("EXPORT", "材料导出");
 
     @EnumValue
     private final String code;

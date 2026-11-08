@@ -2,6 +2,7 @@ package com.company.ruanzhu.generate.service;
 
 import com.company.ruanzhu.file.model.FileRecord;
 import com.company.ruanzhu.file.repository.FileRecordRepository;
+import com.company.ruanzhu.file.service.ExportService;
 import com.company.ruanzhu.file.storage.StorageClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,7 @@ public class AsyncGenerateService {
     private final ManualGenerationService manualGenerationService;
     private final FileRecordRepository fileRecordRepository;
     private final StorageClient storageClient;
+    private final ExportService exportService;
 
     @Async("taskExecutor")
     public void executeCodeGeneration(Long taskId, Long projectId) {
@@ -68,7 +70,15 @@ public class AsyncGenerateService {
                 fileRecordRepository.insert(fileRecord);
             }
 
-            // Step 4: Complete (100%)
+            // Step 4: 打包上传 ZIP（导出时可直接下载）
+            try {
+                exportService.exportAndUpload(projectId, "general");
+                log.info("Export pack uploaded after code generation: taskId={}", taskId);
+            } catch (Exception ex) {
+                log.warn("Export pack after code generation failed (non-fatal): {}", ex.getMessage());
+            }
+
+            // Step 5: Complete (100%)
             taskService.updateTaskStatus(taskId, "SUCCESS", 100, null);
             log.info("Code generation task completed: {}", taskId);
 
@@ -121,7 +131,15 @@ public class AsyncGenerateService {
                 fileRecordRepository.insert(fileRecord);
             }
 
-            // Step 3: Complete (100%)
+            // Step 3: 打包上传 ZIP（导出时可直接下载）
+            try {
+                exportService.exportAndUpload(projectId, "general");
+                log.info("Export pack uploaded after manual generation: taskId={}", taskId);
+            } catch (Exception ex) {
+                log.warn("Export pack after manual generation failed (non-fatal): {}", ex.getMessage());
+            }
+
+            // Step 4: Complete (100%)
             taskService.updateTaskStatus(taskId, "SUCCESS", 100, null);
             log.info("Manual generation task completed: {}", taskId);
 
@@ -147,6 +165,48 @@ public class AsyncGenerateService {
         } catch (Exception e) {
             log.error("Summary generation task failed: {}", taskId, e);
             taskService.updateTaskStatus(taskId, "FAILED", null, e.getMessage());
+        }
+    }
+
+    /**
+     * 异步导出材料 ZIP。
+     * 进度划分：10%(启动) → 40%(生成程序文档) → 70%(生成说明文档+截图) → 90%(打包+上传MinIO) → 100%(完成)
+     */
+    @Async("taskExecutor")
+    public void executeExport(Long taskId, Long projectId, String depositType) {
+        log.info("Starting export task: {}, projectId={}, depositType={}", taskId, projectId, depositType);
+        try {
+            taskService.updateTaskStatus(taskId, "RUNNING", 10, null);
+
+            // 导出（内部生成程序/说明文档+截图+打包ZIP+上传MinIO+记录file_record）
+            // 这里无法精确拆分内部进度，按经验给一个粗粒度进度：进入导出时 40%，完成时 90%
+            taskService.updateTaskStatus(taskId, "RUNNING", 40, null);
+            FileRecord record = exportService.exportAndUpload(projectId, depositType);
+
+            taskService.updateTaskStatus(taskId, "RUNNING", 90, null);
+
+            // 记录结果路径，前端拿到后调下载接口
+            taskService.updateTaskResult(taskId, record.getStoragePath());
+            taskService.updateTaskStatus(taskId, "SUCCESS", 100, null);
+            log.info("Export task completed: {}, file={}", taskId, record.getFileName());
+        } catch (Exception e) {
+            log.error("Export task failed: {}", taskId, e);
+            taskService.updateTaskStatus(taskId, "FAILED", null, e.getMessage());
+        }
+    }
+
+    /**
+     * 静默异步打包上传 ZIP（无任务记录、无进度回调）。
+     * 在 AI 生成代码/手册、保存代码/手册/概要后调用，使导出按钮始终能直接下载最新材料。
+     */
+    @Async("taskExecutor")
+    public void executeExportPack(Long projectId) {
+        try {
+            log.info("Async export pack started: projectId={}", projectId);
+            exportService.exportAndUpload(projectId, "general");
+            log.info("Async export pack completed: projectId={}", projectId);
+        } catch (Exception e) {
+            log.error("Async export pack failed: projectId={}", projectId, e);
         }
     }
 }
